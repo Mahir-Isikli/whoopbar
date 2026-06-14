@@ -102,6 +102,7 @@ struct PopoverView: View {
     @State private var showConnect = false
     @State private var clientId = ""
     @State private var clientSecret = ""
+    @State private var copied = false
 
     private var pal: Pal { Pal(scheme: scheme) }
     private var showOnboarding: Bool { !onboarded && LoginItem.available }
@@ -196,31 +197,41 @@ struct PopoverView: View {
 
     // MARK: connect Whoop (guided, in-app)
 
+    private let createAppURL = "https://developer-dashboard.whoop.com/apps/create"
+    private let whoopGuideURL = "https://developer.whoop.com/docs/developing/getting-started"
+    private let redirectURI = "http://localhost:8973/callback"
+
     private var connectFlow: some View {
-        VStack(alignment: .leading, spacing: 13) {
-            HStack {
-                Text("Connect Whoop").font(.system(size: 17, weight: .semibold, design: .rounded))
+        VStack(alignment: .leading, spacing: 15) {
+            HStack(alignment: .top) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Connect Whoop").font(.system(size: 18, weight: .semibold, design: .rounded))
+                    Text("Recovery, Sleep, Strain & HRV — kept on this Mac.")
+                        .font(.system(size: 11)).foregroundStyle(.secondary)
+                }
                 Spacer()
                 Button { showConnect = false } label: {
-                    Image(systemName: "xmark.circle.fill").font(.system(size: 15)).foregroundStyle(.secondary)
+                    Image(systemName: "xmark").font(.system(size: 11, weight: .semibold))
+                        .foregroundStyle(.secondary).frame(width: 22, height: 22).background(pal.pillRest).clipShape(Circle())
                 }.buttonStyle(.plain)
             }
-            Text("See Recovery, HRV, Strain and Sleep. About 2 minutes, one time.")
-                .font(.system(size: 11)).foregroundStyle(.secondary)
 
-            connectStep(num: "1", title: "Create a free Whoop developer app") {
-                Button { NSWorkspace.shared.open(URL(string: "https://developer.whoop.com")!) } label: {
-                    Label("Open developer.whoop.com", systemImage: "arrow.up.right.square")
-                        .font(.system(size: 11))
-                }.buttonStyle(.bordered).controlSize(.small)
-                VStack(alignment: .leading, spacing: 4) {
-                    bullet("Click Create App")
-                    HStack(spacing: 5) { bullet("Redirect URL"); copyPill("http://localhost:8973/callback") }
-                    bullet("Scopes: recovery, sleep, cycles, workout, profile, offline")
-                }
+            Text("Whoop has every app connect through a free developer app. One time, about two minutes.")
+                .font(.system(size: 11)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+
+            connectStep(num: 1, title: "Create your Whoop app") {
+                Button { NSWorkspace.shared.open(URL(string: createAppURL)!) } label: {
+                    Label("Open Whoop Developer", systemImage: "arrow.up.forward")
+                        .font(.system(size: 12, weight: .medium)).frame(maxWidth: .infinity).padding(.vertical, 3)
+                }.buttonStyle(.borderedProminent).tint(Metric.recovery.tint)
+                redirectField
+                Text("Paste that as the Redirect URL, tick the read scopes (recovery, sleep, cycles, workout, profile), then Create.")
+                    .font(.system(size: 11)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
             }
 
-            connectStep(num: "2", title: "Paste your two keys") {
+            connectStep(num: 2, title: "Paste your keys") {
+                Text("Whoop shows a Client ID and Secret right after you create the app.")
+                    .font(.system(size: 11)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
                 TextField("Client ID", text: $clientId)
                     .textFieldStyle(.roundedBorder).font(.system(size: 11, design: .monospaced))
                 SecureField("Client Secret", text: $clientSecret)
@@ -228,17 +239,40 @@ struct PopoverView: View {
             }
 
             Button { auth.connect(clientId: clientId, clientSecret: clientSecret) } label: {
-                Text("Connect").font(.system(size: 13, weight: .medium))
+                Text("Connect").font(.system(size: 13, weight: .semibold))
                     .frame(maxWidth: .infinity).padding(.vertical, 6)
             }
             .buttonStyle(.borderedProminent).tint(Metric.recovery.tint)
             .disabled(clientId.isEmpty || clientSecret.isEmpty || auth.status == .connecting || auth.status == .syncing)
 
             connectStatus
+
+            Link("New to this? Read Whoop's setup guide", destination: URL(string: whoopGuideURL)!)
+                .font(.system(size: 10)).tint(.secondary)
+                .frame(maxWidth: .infinity, alignment: .center)
         }
         .padding(20)
         .frame(width: 380)
         .onChange(of: auth.status) { _, s in if s == .connected { showConnect = false } }
+    }
+
+    private var redirectField: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text("REDIRECT URL").font(.system(size: 9, weight: .semibold)).tracking(0.6).foregroundStyle(.secondary)
+            HStack(spacing: 8) {
+                Text(redirectURI).font(.system(size: 11, design: .monospaced)).lineLimit(1).truncationMode(.middle)
+                Spacer()
+                Button {
+                    NSPasteboard.general.clearContents(); NSPasteboard.general.setString(redirectURI, forType: .string)
+                    copied = true
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { copied = false }
+                } label: {
+                    Image(systemName: copied ? "checkmark" : "doc.on.doc").font(.system(size: 11, weight: .medium))
+                }.buttonStyle(.plain).foregroundStyle(copied ? Metric.recovery.tint : Color.secondary)
+            }
+            .padding(.horizontal, 10).padding(.vertical, 7)
+            .background(pal.pillRest).clipShape(RoundedRectangle(cornerRadius: 8))
+        }
     }
 
     @ViewBuilder private var connectStatus: some View {
@@ -257,36 +291,21 @@ struct PopoverView: View {
         }
     }
 
-    private func connectStep<C: View>(num: String, title: String, @ViewBuilder content: () -> C) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack(spacing: 8) {
-                Text(num).font(.system(size: 11, weight: .bold)).foregroundStyle(.white)
-                    .frame(width: 18, height: 18).background(Circle().fill(Metric.recovery.tint))
-                Text(title).font(.system(size: 13, weight: .medium))
+    private func connectStep<C: View>(num: Int, title: String, @ViewBuilder content: () -> C) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 9) {
+                Text("\(num)").font(.system(size: 11, weight: .bold, design: .rounded)).foregroundStyle(.white)
+                    .frame(width: 20, height: 20).background(Circle().fill(Metric.recovery.tint))
+                Text(title).font(.system(size: 13, weight: .semibold))
             }
-            VStack(alignment: .leading, spacing: 6) { content() }.padding(.leading, 26)
+            VStack(alignment: .leading, spacing: 8) { content() }.padding(.leading, 29)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(12)
+        .padding(14)
         .background(pal.card)
-        .clipShape(RoundedRectangle(cornerRadius: 12))
-        .overlay(RoundedRectangle(cornerRadius: 12).stroke(pal.hairline, lineWidth: 1))
-    }
-
-    private func bullet(_ t: String) -> some View {
-        Text("•  " + t).font(.system(size: 11)).foregroundStyle(.secondary)
-    }
-
-    private func copyPill(_ text: String) -> some View {
-        HStack(spacing: 4) {
-            Text(text).font(.system(size: 10, design: .monospaced))
-            Button {
-                NSPasteboard.general.clearContents(); NSPasteboard.general.setString(text, forType: .string)
-            } label: { Image(systemName: "doc.on.doc").font(.system(size: 9)) }.buttonStyle(.plain)
-        }
-        .padding(.horizontal, 6).padding(.vertical, 2)
-        .background(pal.pillRest).clipShape(RoundedRectangle(cornerRadius: 5))
-        .foregroundStyle(.secondary)
+        .clipShape(RoundedRectangle(cornerRadius: 14))
+        .overlay(RoundedRectangle(cornerRadius: 14).stroke(pal.hairline, lineWidth: 1))
+        .shadow(color: pal.shadow, radius: 4, y: 1)
     }
 
     // MARK: header

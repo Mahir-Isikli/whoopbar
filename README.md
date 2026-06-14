@@ -45,25 +45,29 @@ Allow Bluetooth when asked. Installs as a login item that auto-starts.
 
 ### Add the daily trends (Recovery / HRV / Strain / Sleep)
 
-These live in WHOOP's cloud, so you make a free **WHOOP developer app**. ~5 minutes, once.
+These live in WHOOP's cloud, so you make a free **WHOOP developer app** (their rule, ~2 min, once).
 
-1. Open **https://developer.whoop.com** and sign in with your normal WHOOP login.
-2. Click **Create App** and fill in:
-   - **Name:** anything, e.g. `WhoopBar`
-   - **Redirect URIs:** `http://localhost:8973/callback`
-   - **Scopes:** tick `read:recovery`, `read:cycles`, `read:sleep`, `read:workout`, `read:profile`, `offline`
-   - **Privacy policy / contacts:** any valid URL / your email (required by the form, not used)
-3. Click **Create**. Copy the **Client ID** and **Client Secret** it shows you.
-4. In Terminal, from the project folder:
+**Easiest: in the app.** Open the menu → **Connect Whoop** and follow the two steps. It opens the page, shows you the exact Redirect URL to copy, and does the login for you. No Terminal.
+
+What you do on Whoop's site (the in-app screen walks you through it):
+
+1. Open **https://developer-dashboard.whoop.com/apps/create** (the app's button does this).
+2. Name it anything, paste `http://localhost:8973/callback` as the **Redirect URL**, and tick the read scopes (`read:recovery`, `read:sleep`, `read:cycles`, `read:workout`, `read:profile`). A privacy-policy URL + contact email are required by the form.
+3. Click **Create**, then copy the **Client ID** and **Client Secret** into the app and hit Connect.
+
+More background in [Whoop's setup guide](https://developer.whoop.com/docs/developing/getting-started).
+
+<details><summary>Advanced: headless / scripted (no GUI)</summary>
+
+For a server or cron, use the Python collector instead:
 
 ```bash
-export WHOOP_CLIENT_ID=paste-id  WHOOP_CLIENT_SECRET=paste-secret
-python3 collector/whoop_auth.py        # a browser opens — click Approve, once
-python3 collector/whoop_collector.py   # pulls your history; trends appear in WhoopBar
-./collector/schedule.sh                # keeps them fresh (runs every 30 min)
+export WHOOP_CLIENT_ID=...  WHOOP_CLIENT_SECRET=...
+python3 collector/whoop_auth.py        # browser login, once
+python3 collector/whoop_collector.py   # pulls history
+./collector/schedule.sh                # refresh every 30 min
 ```
-
-That's it. No re-typing later, `schedule.sh` handles the refresh for you.
+</details>
 
 ## Where your data lives
 
