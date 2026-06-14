@@ -39,6 +39,10 @@ final class WhoopStore: ObservableObject {
         timer = Timer.scheduledTimer(withTimeInterval: 600, repeats: true) { [weak self] _ in self?.refresh() }
         // Keep the day-view HR series fresh while the popover is open.
         hrTimer = Timer.scheduledTimer(withTimeInterval: 10, repeats: true) { [weak self] _ in self?.loadTodayHR() }
+        // Reload trends right after the in-app WHOOP connect/sync writes new history.
+        NotificationCenter.default.addObserver(forName: WhoopAuth.historyUpdated, object: nil, queue: .main) { [weak self] _ in
+            self?.refresh()
+        }
     }
 
     /// Load today's intraday HR samples from the local SQLite store.

@@ -92,12 +92,16 @@ struct HoverInfo: Equatable {
 struct PopoverView: View {
     @EnvironmentObject var bt: BluetoothManager
     @EnvironmentObject var store: WhoopStore
+    @EnvironmentObject var auth: WhoopAuth
     @Environment(\.colorScheme) private var scheme
     @State private var metric: Metric = .recovery
     @State private var range = 30
     @State private var hover: HoverInfo?
     @AppStorage("onboarded") private var onboarded = false
     @State private var launchAtLogin = false
+    @State private var showConnect = false
+    @State private var clientId = ""
+    @State private var clientSecret = ""
 
     private var pal: Pal { Pal(scheme: scheme) }
     private var showOnboarding: Bool { !onboarded && LoginItem.available }
@@ -119,7 +123,9 @@ struct PopoverView: View {
     var body: some View {
         ZStack {
             pal.bg.ignoresSafeArea()
-            if showOnboarding { onboarding } else { mainContent }
+            if showConnect { connectFlow }
+            else if showOnboarding { onboarding }
+            else { mainContent }
         }
         .frame(width: 380)
         .onAppear { launchAtLogin = LoginItem.enabled }
@@ -155,28 +161,132 @@ struct PopoverView: View {
     // MARK: onboarding (first launch)
 
     private var onboarding: some View {
-        VStack(spacing: 14) {
+        VStack(spacing: 13) {
             HeartBeat(active: true)
                 .scaleEffect(1.6)
                 .padding(.bottom, 2)
             Text("WhoopBar").font(.system(size: 20, weight: .semibold, design: .rounded))
-            Text("Your live heart rate, right in the menu bar.\nHistory stays on this Mac.")
+            Text("Your live heart rate, right in the menu bar.\nEverything stays on this Mac.")
                 .font(.system(size: 12)).foregroundStyle(.secondary).multilineTextAlignment(.center)
             Toggle("Start automatically at login", isOn: $launchAtLogin)
                 .toggleStyle(.switch).font(.system(size: 12)).tint(Metric.recovery.tint)
                 .padding(.horizontal, 8).fixedSize()
-            Button {
-                LoginItem.set(launchAtLogin)
-                onboarded = true
-            } label: {
-                Text("Get started").font(.system(size: 13, weight: .medium))
-                    .frame(maxWidth: .infinity).padding(.vertical, 6)
+            VStack(spacing: 8) {
+                Button {
+                    LoginItem.set(launchAtLogin); onboarded = true; showConnect = true
+                } label: {
+                    Text("Connect Whoop for full data").font(.system(size: 13, weight: .medium))
+                        .frame(maxWidth: .infinity).padding(.vertical, 6)
+                }
+                .buttonStyle(.borderedProminent).tint(Metric.recovery.tint)
+                Button {
+                    LoginItem.set(launchAtLogin); onboarded = true
+                } label: {
+                    Text("Just heart rate for now").font(.system(size: 12)).foregroundStyle(.secondary)
+                }
+                .buttonStyle(.plain)
             }
-            .buttonStyle(.borderedProminent).tint(Metric.recovery.tint)
+            Text("Recovery, Sleep, Strain & HRV need a quick Whoop login.\nYou can add it anytime.")
+                .font(.system(size: 10)).foregroundStyle(.tertiary).multilineTextAlignment(.center)
         }
         .padding(24)
         .frame(width: 380)
         .onAppear { launchAtLogin = true }   // default the choice to on
+    }
+
+    // MARK: connect Whoop (guided, in-app)
+
+    private var connectFlow: some View {
+        VStack(alignment: .leading, spacing: 13) {
+            HStack {
+                Text("Connect Whoop").font(.system(size: 17, weight: .semibold, design: .rounded))
+                Spacer()
+                Button { showConnect = false } label: {
+                    Image(systemName: "xmark.circle.fill").font(.system(size: 15)).foregroundStyle(.secondary)
+                }.buttonStyle(.plain)
+            }
+            Text("See Recovery, HRV, Strain and Sleep. About 2 minutes, one time.")
+                .font(.system(size: 11)).foregroundStyle(.secondary)
+
+            connectStep(num: "1", title: "Create a free Whoop developer app") {
+                Button { NSWorkspace.shared.open(URL(string: "https://developer.whoop.com")!) } label: {
+                    Label("Open developer.whoop.com", systemImage: "arrow.up.right.square")
+                        .font(.system(size: 11))
+                }.buttonStyle(.bordered).controlSize(.small)
+                VStack(alignment: .leading, spacing: 4) {
+                    bullet("Click Create App")
+                    HStack(spacing: 5) { bullet("Redirect URL"); copyPill("http://localhost:8973/callback") }
+                    bullet("Scopes: recovery, sleep, cycles, workout, profile, offline")
+                }
+            }
+
+            connectStep(num: "2", title: "Paste your two keys") {
+                TextField("Client ID", text: $clientId)
+                    .textFieldStyle(.roundedBorder).font(.system(size: 11, design: .monospaced))
+                SecureField("Client Secret", text: $clientSecret)
+                    .textFieldStyle(.roundedBorder).font(.system(size: 11, design: .monospaced))
+            }
+
+            Button { auth.connect(clientId: clientId, clientSecret: clientSecret) } label: {
+                Text("Connect").font(.system(size: 13, weight: .medium))
+                    .frame(maxWidth: .infinity).padding(.vertical, 6)
+            }
+            .buttonStyle(.borderedProminent).tint(Metric.recovery.tint)
+            .disabled(clientId.isEmpty || clientSecret.isEmpty || auth.status == .connecting || auth.status == .syncing)
+
+            connectStatus
+        }
+        .padding(20)
+        .frame(width: 380)
+        .onChange(of: auth.status) { _, s in if s == .connected { showConnect = false } }
+    }
+
+    @ViewBuilder private var connectStatus: some View {
+        switch auth.status {
+        case .connecting:
+            HStack(spacing: 6) { ProgressView().controlSize(.small)
+                Text("Waiting for the Whoop login in your browser…").font(.system(size: 11)).foregroundStyle(.secondary) }
+        case .syncing:
+            HStack(spacing: 6) { ProgressView().controlSize(.small)
+                Text("Fetching your Whoop data…").font(.system(size: 11)).foregroundStyle(.secondary) }
+        case .failed(let msg):
+            Label(msg, systemImage: "exclamationmark.triangle.fill")
+                .font(.system(size: 11)).foregroundStyle(Color(red: 0.9, green: 0.42, blue: 0.4))
+        default:
+            EmptyView()
+        }
+    }
+
+    private func connectStep<C: View>(num: String, title: String, @ViewBuilder content: () -> C) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 8) {
+                Text(num).font(.system(size: 11, weight: .bold)).foregroundStyle(.white)
+                    .frame(width: 18, height: 18).background(Circle().fill(Metric.recovery.tint))
+                Text(title).font(.system(size: 13, weight: .medium))
+            }
+            VStack(alignment: .leading, spacing: 6) { content() }.padding(.leading, 26)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(12)
+        .background(pal.card)
+        .clipShape(RoundedRectangle(cornerRadius: 12))
+        .overlay(RoundedRectangle(cornerRadius: 12).stroke(pal.hairline, lineWidth: 1))
+    }
+
+    private func bullet(_ t: String) -> some View {
+        Text("•  " + t).font(.system(size: 11)).foregroundStyle(.secondary)
+    }
+
+    private func copyPill(_ text: String) -> some View {
+        HStack(spacing: 4) {
+            Text(text).font(.system(size: 10, design: .monospaced))
+            Button {
+                NSPasteboard.general.clearContents(); NSPasteboard.general.setString(text, forType: .string)
+            } label: { Image(systemName: "doc.on.doc").font(.system(size: 9)) }.buttonStyle(.plain)
+        }
+        .padding(.horizontal, 6).padding(.vertical, 2)
+        .background(pal.pillRest).clipShape(RoundedRectangle(cornerRadius: 5))
+        .foregroundStyle(.secondary)
     }
 
     // MARK: header
@@ -316,7 +426,17 @@ struct PopoverView: View {
     private var trendChart: some View {
         Group {
             if series.isEmpty {
-                placeholder(store.loading ? "Loading…" : "No data")
+                VStack(spacing: 10) {
+                    Text(store.loading ? "Loading…" : (auth.isConnected ? "No trend data yet" : "Connect Whoop to see your trends"))
+                        .font(.system(size: 11)).foregroundStyle(.secondary)
+                    if !auth.isConnected && !store.loading {
+                        Button { showConnect = true } label: {
+                            Text("Connect Whoop").font(.system(size: 12, weight: .medium))
+                        }.buttonStyle(.borderedProminent).controlSize(.small).tint(Metric.recovery.tint)
+                    }
+                }
+                .frame(maxWidth: .infinity).frame(height: 150)
+                .background(pal.pillRest).clipShape(RoundedRectangle(cornerRadius: 14))
             } else {
                 let dom = metric.domain(series.map(\.value))
                 Chart {
