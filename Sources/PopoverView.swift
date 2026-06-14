@@ -102,7 +102,7 @@ struct PopoverView: View {
     @State private var showConnect = false
     @State private var clientId = ""
     @State private var clientSecret = ""
-    @State private var copied = false
+    @State private var copiedText: String?
 
     private var pal: Pal { Pal(scheme: scheme) }
     private var showOnboarding: Bool { !onboarded && LoginItem.available }
@@ -200,6 +200,7 @@ struct PopoverView: View {
     private let createAppURL = "https://developer-dashboard.whoop.com/apps/create"
     private let whoopGuideURL = "https://developer.whoop.com/docs/developing/getting-started"
     private let redirectURI = "http://localhost:8973/callback"
+    private let privacyURL = "https://github.com/Mahir-Isikli/whoopbar/blob/main/PRIVACY.md"
 
     private var connectFlow: some View {
         VStack(alignment: .leading, spacing: 15) {
@@ -224,9 +225,16 @@ struct PopoverView: View {
                     Label("Open Whoop Developer", systemImage: "arrow.up.forward")
                         .font(.system(size: 12, weight: .medium)).frame(maxWidth: .infinity).padding(.vertical, 3)
                 }.buttonStyle(.borderedProminent).tint(Metric.recovery.tint)
-                redirectField
-                Text("Paste that as the Redirect URL, tick the read scopes (recovery, sleep, cycles, workout, profile), then Create.")
-                    .font(.system(size: 11)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                Text("Fill Whoop's form exactly like this:")
+                    .font(.system(size: 11, weight: .medium))
+                formRow("Name", "anything (e.g. WhoopBar)")
+                formRow("Logo", "skip it — optional")
+                formRow("Contacts", "your email address")
+                formRow("Privacy", privacyURL, copyable: true)
+                formRow("Redirect", redirectURI, copyable: true)
+                formRow("Scopes", "tick recovery, sleep, cycles, workout, profile")
+                Text("Then click Create at the bottom.")
+                    .font(.system(size: 11)).foregroundStyle(.secondary)
             }
 
             connectStep(num: 2, title: "Paste your keys") {
@@ -256,23 +264,35 @@ struct PopoverView: View {
         .onChange(of: auth.status) { _, s in if s == .connected { showConnect = false } }
     }
 
-    private var redirectField: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Text("REDIRECT URL").font(.system(size: 9, weight: .semibold)).tracking(0.6).foregroundStyle(.secondary)
-            HStack(spacing: 8) {
-                Text(redirectURI).font(.system(size: 11, design: .monospaced)).lineLimit(1).truncationMode(.middle)
-                Spacer()
-                Button {
-                    NSPasteboard.general.clearContents(); NSPasteboard.general.setString(redirectURI, forType: .string)
-                    copied = true
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { copied = false }
-                } label: {
-                    Image(systemName: copied ? "checkmark" : "doc.on.doc").font(.system(size: 11, weight: .medium))
-                }.buttonStyle(.plain).foregroundStyle(copied ? Metric.recovery.tint : Color.secondary)
+    /// One line of the Whoop form, with what to type. Copyable values get a one-tap copy.
+    private func formRow(_ label: String, _ value: String, copyable: Bool = false) -> some View {
+        HStack(alignment: copyable ? .center : .top, spacing: 8) {
+            Text(label).font(.system(size: 11, weight: .semibold)).frame(width: 62, alignment: .leading)
+            if copyable {
+                HStack(spacing: 6) {
+                    Text(value).font(.system(size: 10.5, design: .monospaced)).lineLimit(1).truncationMode(.middle)
+                    Spacer(minLength: 4)
+                    copyButton(value)
+                }
+                .padding(.horizontal, 8).padding(.vertical, 5)
+                .background(pal.pillRest).clipShape(RoundedRectangle(cornerRadius: 6))
+            } else {
+                Text(value).font(.system(size: 11)).foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .leading).fixedSize(horizontal: false, vertical: true)
             }
-            .padding(.horizontal, 10).padding(.vertical, 7)
-            .background(pal.pillRest).clipShape(RoundedRectangle(cornerRadius: 8))
         }
+    }
+
+    private func copyButton(_ value: String) -> some View {
+        Button {
+            NSPasteboard.general.clearContents(); NSPasteboard.general.setString(value, forType: .string)
+            copiedText = value
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { if copiedText == value { copiedText = nil } }
+        } label: {
+            Image(systemName: copiedText == value ? "checkmark" : "doc.on.doc").font(.system(size: 11, weight: .medium))
+        }
+        .buttonStyle(.plain)
+        .foregroundStyle(copiedText == value ? Metric.recovery.tint : Color.secondary)
     }
 
     @ViewBuilder private var connectStatus: some View {
