@@ -1,4 +1,5 @@
 WhoopBar.app/
+*.zip
 .build/
 *.db
 *.db-wal

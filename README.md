@@ -14,7 +14,7 @@ Needs a Mac (macOS 14+) with Bluetooth and a WHOOP strap worn nearby.
 
 ### Option A — Download (no Terminal)
 
-1. Download `WhoopBar.zip` from the [latest release](../../releases/latest).
+1. Download `WhoopBar.zip` from the [releases page](../../releases).
 2. Unzip, drag **WhoopBar.app** to Applications.
 3. **Right-click it → Open** (once; it's free and unsigned, so macOS asks the first time).
 4. Click **Allow** for Bluetooth. A heart appears in your menu bar.
