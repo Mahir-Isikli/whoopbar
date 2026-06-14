@@ -1,0 +1,447 @@
+import SwiftUI
+import Charts
+
+enum Metric: String, CaseIterable, Identifiable {
+    case recovery = "Recovery"
+    case hrv = "HRV"
+    case strain = "Strain"
+    case sleep = "Sleep"
+    case rhr = "RHR"
+    var id: String { rawValue }
+
+    var unit: String {
+        switch self { case .recovery: return "%"; case .hrv: return "ms"; case .strain: return ""
+        case .sleep: return "h"; case .rhr: return "bpm" }
+    }
+    /// Plain-language explainer shown under the picker.
+    var explainer: String {
+        switch self {
+        case .recovery: return "How ready your body is today · 0–100%"
+        case .hrv:      return "Heart-rate variability · ms, higher is better"
+        case .strain:   return "Cardiovascular load · 0–21 scale"
+        case .sleep:    return "Time asleep · hours"
+        case .rhr:      return "Resting heart rate · bpm, lower is better"
+        }
+    }
+    func value(_ d: DayPoint) -> Double? {
+        switch self {
+        case .recovery: return d.recovery
+        case .hrv: return d.hrv
+        case .strain: return d.strain
+        case .sleep: return d.sleep_hours
+        case .rhr: return d.rhr
+        }
+    }
+    func format(_ v: Double) -> String {
+        switch self {
+        case .recovery: return "\(Int(v.rounded()))%"
+        case .hrv:      return "\(Int(v.rounded())) ms"
+        case .strain:   return String(format: "%.1f", v)
+        case .sleep:    return String(format: "%.1f", v) + "h"
+        case .rhr:      return "\(Int(v.rounded())) bpm"
+        }
+    }
+    var tint: Color {
+        switch self {
+        case .recovery: return Color(red: 0.27, green: 0.78, blue: 0.52)
+        case .hrv:      return Color(red: 0.30, green: 0.66, blue: 0.92)
+        case .strain:   return Color(red: 0.36, green: 0.50, blue: 0.96)
+        case .sleep:    return Color(red: 0.55, green: 0.48, blue: 0.95)
+        case .rhr:      return Color(red: 0.96, green: 0.46, blue: 0.43)
+        }
+    }
+    /// A fixed, sensible y-range per metric so the axis means something.
+    func domain(_ values: [Double]) -> ClosedRange<Double> {
+        switch self {
+        case .recovery: return 0...100
+        case .strain:   return 0...21
+        case .sleep:    return 0...max(8, (values.max() ?? 8).rounded(.up))
+        case .hrv:      return 0...max(60, ((values.max() ?? 60) * 1.15).rounded(.up))
+        case .rhr:
+            let lo = max(30, (values.min() ?? 50) - 5).rounded(.down)
+            let hi = ((values.max() ?? 70) + 5).rounded(.up)
+            return lo...hi
+        }
+    }
+}
+
+/// Scheme-aware palette so the popover is clean in both light and dark (night) mode.
+struct Pal {
+    let scheme: ColorScheme
+    var dark: Bool { scheme == .dark }
+    var bg: Color { dark ? Color(red: 0.10, green: 0.10, blue: 0.12) : Color(red: 0.975, green: 0.975, blue: 0.985) }
+    var card: Color { dark ? Color(red: 0.16, green: 0.16, blue: 0.19) : .white }
+    var hairline: Color { dark ? Color.white.opacity(0.10) : Color.black.opacity(0.06) }
+    var pillRest: Color { dark ? Color.white.opacity(0.08) : Color.black.opacity(0.045) }
+    var grid: Color { dark ? Color.white.opacity(0.08) : Color.black.opacity(0.05) }
+    var shadow: Color { dark ? Color.black.opacity(0.30) : Color.black.opacity(0.06) }
+}
+
+struct ChartPoint: Identifiable {
+    let date: Date
+    let value: Double
+    var id: TimeInterval { date.timeIntervalSince1970 }
+}
+
+/// The point currently under the cursor while scrubbing a chart.
+struct HoverInfo: Equatable {
+    let date: Date
+    let value: Double
+}
+
+struct PopoverView: View {
+    @EnvironmentObject var bt: BluetoothManager
+    @EnvironmentObject var store: WhoopStore
+    @Environment(\.colorScheme) private var scheme
+    @State private var metric: Metric = .recovery
+    @State private var range = 30
+    @State private var hover: HoverInfo?
+
+    private var pal: Pal { Pal(scheme: scheme) }
+
+    private var series: [ChartPoint] {
+        let cutoff = Calendar.current.date(byAdding: .day, value: -range, to: Date()) ?? .distantPast
+        return store.days.compactMap { d -> ChartPoint? in
+            guard let v = metric.value(d), d.day >= cutoff else { return nil }
+            return ChartPoint(date: d.day, value: v)
+        }
+    }
+
+    /// Nearest data point to a scrubbed x-position.
+    private func nearest(_ target: Date, in pts: [(Date, Double)]) -> HoverInfo? {
+        guard let best = pts.min(by: { abs($0.0.timeIntervalSince(target)) < abs($1.0.timeIntervalSince(target)) }) else { return nil }
+        return HoverInfo(date: best.0, value: best.1)
+    }
+
+    var body: some View {
+        ZStack {
+            pal.bg.ignoresSafeArea()
+            // Constant-height layout: the same rows render in every mode, so the
+            // menu-bar window never has to animate a resize (that resize is what
+            // crashed AppKit's constraint solver). Only the chart's contents swap.
+            VStack(alignment: .leading, spacing: 14) {
+                header
+                statRow
+                metricPills
+                    .disabled(range == 1)
+                    .opacity(range == 1 ? 0.3 : 1)          // metrics aren't intraday; dim in Day view
+                Text(range == 1 ? "Today's heart rate · logged live on this Mac while connected"
+                                 : metric.explainer)
+                    .font(.system(size: 11)).foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                Group {
+                    if range == 1 { dayChart } else { trendChart }
+                }
+                .transaction { $0.animation = nil }         // swap instantly; never animate a relayout here
+                rangePills
+                footer
+            }
+            .padding(18)
+            .onChange(of: range) { _, newValue in hover = nil; if newValue == 1 { store.loadTodayHR() } }
+            .onChange(of: metric) { _, _ in hover = nil }
+        }
+        .frame(width: 380)
+        // No forced color scheme — follows the system, so dark at night.
+    }
+
+    // MARK: header
+
+    private var header: some View {
+        HStack(alignment: .center) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text("WHOOP").font(.system(size: 11, weight: .bold)).tracking(1.5).foregroundStyle(.secondary)
+                HStack(alignment: .firstTextBaseline, spacing: 6) {
+                    HeartBeat(active: bt.heartRate != nil)
+                    Text(bt.heartRate.map { "\($0)" } ?? "–")
+                        .font(.system(size: 38, weight: .semibold, design: .rounded))
+                        .monospacedDigit()
+                        .contentTransition(.numericText())
+                    Text("bpm").font(.system(size: 13)).foregroundStyle(.secondary).padding(.bottom, 4)
+                }
+            }
+            Spacer()
+            statusPill
+        }
+    }
+
+    private var statusPill: some View {
+        let (text, color): (String, Color) = {
+            switch bt.state {
+            case .connected:  return ("Live", Color(red: 0.27, green: 0.78, blue: 0.52))
+            case .connecting: return ("Linking", .orange)
+            case .searching:  return ("Searching", .gray)
+            case .off:        return ("BT off", Color(red: 0.96, green: 0.46, blue: 0.43))
+            case .unknown:    return ("…", .gray)
+            }
+        }()
+        return VStack(alignment: .trailing, spacing: 4) {
+            HStack(spacing: 5) {
+                Circle().fill(color).frame(width: 7, height: 7)
+                Text(text).font(.system(size: 12, weight: .medium)).foregroundStyle(.secondary)
+            }
+            if let b = bt.batteryLevel {
+                Label("\(b)%", systemImage: batteryIcon(b))
+                    .font(.system(size: 11)).foregroundStyle(.secondary).labelStyle(.titleAndIcon)
+            }
+        }
+    }
+
+    private func batteryIcon(_ b: Int) -> String {
+        switch b { case ..<13: return "battery.0percent"; case ..<38: return "battery.25percent"
+        case ..<63: return "battery.50percent"; case ..<88: return "battery.75percent"; default: return "battery.100percent" }
+    }
+
+    // MARK: today stats
+
+    private var statRow: some View {
+        HStack(spacing: 10) {
+            StatCard(label: "Recovery", value: store.latest?.recovery, suffix: "%",
+                     tint: recoveryColor(store.latest?.recovery), pal: pal)
+            StatCard(label: "Sleep", value: store.latest?.sleep_hours, suffix: "h", tint: Metric.sleep.tint, pal: pal)
+            StatCard(label: "Strain", value: store.latest?.strain, suffix: "", tint: Metric.strain.tint, pal: pal)
+        }
+    }
+
+    private func recoveryColor(_ r: Double?) -> Color {
+        guard let r else { return .gray }
+        if r >= 67 { return Color(red: 0.27, green: 0.78, blue: 0.52) }
+        if r >= 34 { return Color(red: 0.95, green: 0.74, blue: 0.22) }
+        return Color(red: 0.96, green: 0.42, blue: 0.40)
+    }
+
+    // MARK: metric selector
+
+    private var metricPills: some View {
+        FluidTabBar(items: Metric.allCases, selection: $metric,
+                    label: { $0.rawValue }, accent: { $0.tint }, pal: pal)
+    }
+
+    // MARK: charts
+
+    private let hrTint = Color(red: 0.96, green: 0.36, blue: 0.42)
+
+    private func placeholder(_ text: String) -> some View {
+        RoundedRectangle(cornerRadius: 14).fill(pal.pillRest).frame(height: 150)
+            .overlay(Text(text).font(.system(size: 11)).foregroundStyle(.secondary)
+                .multilineTextAlignment(.center).padding(.horizontal, 24))
+    }
+
+    /// Today's intraday HR (downsampled for rendering if very dense).
+    private var dayHRSeries: [HRPoint] {
+        let s = store.todayHR
+        guard s.count > 1200 else { return s }
+        let step = s.count / 1200 + 1
+        return s.enumerated().filter { $0.offset % step == 0 }.map(\.element)
+    }
+
+    private var dayChart: some View {
+        Group {
+            if dayHRSeries.isEmpty {
+                placeholder("No heart rate logged yet today.\nWear the strap near your Mac and it fills in live.")
+            } else {
+                let vals = dayHRSeries.map(\.bpm)
+                let lo = max(40, (vals.min() ?? 50) - 5).rounded(.down)
+                let hi = ((vals.max() ?? 120) + 8).rounded(.up)
+                let startOfDay = Calendar.current.startOfDay(for: Date())
+                Chart {
+                    ForEach(dayHRSeries) { p in
+                        AreaMark(x: .value("Time", p.date), yStart: .value("lo", lo), yEnd: .value("bpm", p.bpm))
+                            .interpolationMethod(.monotone)
+                            .foregroundStyle(.linearGradient(colors: [hrTint.opacity(0.22), hrTint.opacity(0.0)],
+                                                              startPoint: .top, endPoint: .bottom))
+                        LineMark(x: .value("Time", p.date), y: .value("bpm", p.bpm))
+                            .interpolationMethod(.monotone)
+                            .foregroundStyle(hrTint)
+                            .lineStyle(StrokeStyle(lineWidth: 1.8, lineCap: .round, lineJoin: .round))
+                    }
+                    hoverMarks(tint: hrTint) { h in
+                        hoverCard(value: "\(Int(h.value.rounded())) bpm",
+                                  sub: h.date.formatted(.dateTime.hour().minute()), tint: hrTint)
+                    }
+                }
+                .chartYScale(domain: lo...hi)
+                .chartXScale(domain: startOfDay...max(Date(), dayHRSeries.last?.date ?? Date()))
+                .chartYAxis {
+                    AxisMarks(position: .leading, values: .automatic(desiredCount: 4)) {
+                        AxisGridLine().foregroundStyle(pal.grid)
+                        AxisValueLabel().font(.system(size: 9)).foregroundStyle(.secondary)
+                    }
+                }
+                .chartXAxis {
+                    AxisMarks(values: .automatic(desiredCount: 5)) {
+                        AxisValueLabel(format: .dateTime.hour()).font(.system(size: 9)).foregroundStyle(.secondary)
+                    }
+                }
+                .chartOverlay { proxy in scrubber(proxy, points: dayHRSeries.map { ($0.date, $0.bpm) }) }
+                .frame(height: 150)
+            }
+        }
+    }
+
+    private var trendChart: some View {
+        Group {
+            if series.isEmpty {
+                placeholder(store.loading ? "Loading…" : "No data")
+            } else {
+                let dom = metric.domain(series.map(\.value))
+                Chart {
+                    ForEach(series) { point in
+                        AreaMark(x: .value("Date", point.date),
+                                 yStart: .value("min", dom.lowerBound),
+                                 yEnd: .value(metric.rawValue, point.value))
+                            .interpolationMethod(.monotone)
+                            .foregroundStyle(.linearGradient(colors: [metric.tint.opacity(0.22), metric.tint.opacity(0.0)],
+                                                              startPoint: .top, endPoint: .bottom))
+                        LineMark(x: .value("Date", point.date), y: .value(metric.rawValue, point.value))
+                            .interpolationMethod(.monotone)
+                            .foregroundStyle(metric.tint)
+                            .lineStyle(StrokeStyle(lineWidth: 2.2, lineCap: .round, lineJoin: .round))
+                    }
+                    hoverMarks(tint: metric.tint) { h in
+                        hoverCard(value: metric.format(h.value),
+                                  sub: h.date.formatted(.dateTime.month(.abbreviated).day()), tint: metric.tint)
+                    }
+                }
+                .chartYScale(domain: dom)
+                .chartYAxis {
+                    AxisMarks(position: .leading, values: .automatic(desiredCount: 4)) {
+                        AxisGridLine().foregroundStyle(pal.grid)
+                        AxisValueLabel().font(.system(size: 9)).foregroundStyle(.secondary)
+                    }
+                }
+                .chartXAxis {
+                    AxisMarks(values: .automatic(desiredCount: 4)) {
+                        AxisValueLabel(format: .dateTime.month(.abbreviated).day())
+                            .font(.system(size: 9)).foregroundStyle(.secondary)
+                    }
+                }
+                .chartOverlay { proxy in scrubber(proxy, points: series.map { ($0.date, $0.value) }) }
+                .frame(height: 150)
+            }
+        }
+    }
+
+    // MARK: hover scrubbing
+
+    /// Guide line + dot + floating value card at the hovered point (added inside a Chart builder).
+    @ChartContentBuilder
+    private func hoverMarks<A: View>(tint: Color, @ViewBuilder card: (HoverInfo) -> A) -> some ChartContent {
+        if let h = hover {
+            RuleMark(x: .value("sel", h.date))
+                .foregroundStyle(Color.secondary.opacity(0.35))
+                .lineStyle(StrokeStyle(lineWidth: 1, dash: [3, 3]))
+            PointMark(x: .value("sel", h.date), y: .value("v", h.value))
+                .foregroundStyle(tint)
+                .symbolSize(60)
+                .annotation(position: .top, spacing: 6,
+                            overflowResolution: .init(x: .fit(to: .chart), y: .disabled)) {
+                    card(h)
+                }
+        }
+    }
+
+    /// Transparent overlay that maps the cursor x-position to the nearest data point.
+    private func scrubber(_ proxy: ChartProxy, points: [(Date, Double)]) -> some View {
+        GeometryReader { geo in
+            Rectangle().fill(.clear).contentShape(Rectangle())
+                .onContinuousHover { phase in
+                    switch phase {
+                    case .active(let loc):
+                        guard let anchor = proxy.plotFrame else { return }
+                        let frame = geo[anchor]
+                        guard frame.contains(loc), let d: Date = proxy.value(atX: loc.x - frame.minX) else {
+                            hover = nil; return
+                        }
+                        hover = nearest(d, in: points)
+                    case .ended:
+                        hover = nil
+                    }
+                }
+        }
+    }
+
+    private func hoverCard(value: String, sub: String, tint: Color) -> some View {
+        VStack(spacing: 1) {
+            Text(value).font(.system(size: 13, weight: .semibold, design: .rounded)).foregroundStyle(tint)
+            Text(sub).font(.system(size: 9)).foregroundStyle(.secondary)
+        }
+        .padding(.horizontal, 8).padding(.vertical, 5)
+        .background(pal.card)
+        .clipShape(RoundedRectangle(cornerRadius: 8))
+        .overlay(RoundedRectangle(cornerRadius: 8).stroke(pal.hairline, lineWidth: 1))
+        .shadow(color: pal.shadow, radius: 5, y: 2)
+        .fixedSize()
+    }
+
+    // MARK: range + footer
+
+    private var rangePills: some View {
+        HStack {
+            FluidTabBar(items: [1, 7, 30, 90], selection: $range,
+                        label: { $0 == 1 ? "Day" : "\($0)d" }, accent: { _ in .primary }, showTrack: false, pal: pal)
+            Spacer()
+        }
+    }
+
+    private var footer: some View {
+        HStack {
+            Text(updatedText).font(.system(size: 11)).foregroundStyle(.secondary)
+            Spacer()
+            Button { store.refresh() } label: {
+                Image(systemName: "arrow.clockwise")
+                    .font(.system(size: 12, weight: .medium))
+                    .rotationEffect(.degrees(store.loading ? 360 : 0))
+                    .animation(store.loading ? .linear(duration: 1).repeatForever(autoreverses: false) : .default, value: store.loading)
+            }.buttonStyle(.plain).foregroundStyle(.secondary)
+            Button { NSApplication.shared.terminate(nil) } label: {
+                Image(systemName: "power").font(.system(size: 12, weight: .medium))
+            }.buttonStyle(.plain).foregroundStyle(.secondary)
+        }
+    }
+
+    private var updatedText: String {
+        guard let d = store.lastUpdated else { return store.errorText ?? "—" }
+        let m = Int(Date().timeIntervalSince(d) / 60)
+        return m <= 0 ? "Updated just now" : "Updated \(m)m ago"
+    }
+}
+
+// MARK: small components
+
+struct StatCard: View {
+    let label: String
+    let value: Double?
+    let suffix: String
+    let tint: Color
+    let pal: Pal
+    var body: some View {
+        VStack(alignment: .leading, spacing: 3) {
+            Text(label).font(.system(size: 10, weight: .medium)).foregroundStyle(.secondary)
+            HStack(alignment: .firstTextBaseline, spacing: 1) {
+                Text(value.map { fmt($0) } ?? "–")
+                    .font(.system(size: 20, weight: .semibold, design: .rounded)).foregroundStyle(tint)
+                Text(suffix).font(.system(size: 11)).foregroundStyle(tint.opacity(0.7))
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.vertical, 10).padding(.horizontal, 12)
+        .background(pal.card)
+        .clipShape(RoundedRectangle(cornerRadius: 12))
+        .overlay(RoundedRectangle(cornerRadius: 12).stroke(pal.hairline, lineWidth: 1))
+        .shadow(color: pal.shadow, radius: 4, y: 1)
+    }
+    private func fmt(_ v: Double) -> String { v >= 10 || v == v.rounded() ? String(Int(v.rounded())) : String(format: "%.1f", v) }
+}
+
+struct HeartBeat: View {
+    let active: Bool
+    @State private var pulse = false
+    var body: some View {
+        Image(systemName: "heart.fill")
+            .font(.system(size: 20))
+            .foregroundStyle(active ? Color(red: 0.96, green: 0.36, blue: 0.42) : Color.gray.opacity(0.4))
+            .scaleEffect(active && pulse ? 1.14 : 1.0)
+            .animation(active ? .easeInOut(duration: 0.55).repeatForever(autoreverses: true) : .default, value: pulse)
+            .onAppear { pulse = true }
+    }
+}

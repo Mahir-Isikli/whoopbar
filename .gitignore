@@ -1,0 +1,7 @@
+WhoopBar.app/
+.build/
+*.db
+*.db-wal
+*.db-shm
+whoop_tokens.json
+.DS_Store
