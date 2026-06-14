@@ -99,13 +99,12 @@ struct PopoverView: View {
     @State private var hover: HoverInfo?
     @AppStorage("onboarded") private var onboarded = false
     @State private var launchAtLogin = false
-    @State private var showConnect = false
-    @State private var clientId = ""
-    @State private var clientSecret = ""
-    @State private var copiedText: String?
 
     private var pal: Pal { Pal(scheme: scheme) }
     private var showOnboarding: Bool { !onboarded && LoginItem.available }
+
+    /// Open the Connect flow in its own AppKit window (stays open through the browser login).
+    private func openConnect() { ConnectWindowController.shared.show(auth: auth) }
 
     private var series: [ChartPoint] {
         let cutoff = Calendar.current.date(byAdding: .day, value: -range, to: Date()) ?? .distantPast
@@ -124,9 +123,7 @@ struct PopoverView: View {
     var body: some View {
         ZStack {
             pal.bg.ignoresSafeArea()
-            if showConnect { connectFlow }
-            else if showOnboarding { onboarding }
-            else { mainContent }
+            if showOnboarding { onboarding } else { mainContent }
         }
         .frame(width: 380)
         .onAppear { launchAtLogin = LoginItem.enabled }
@@ -174,7 +171,7 @@ struct PopoverView: View {
                 .padding(.horizontal, 8).fixedSize()
             VStack(spacing: 8) {
                 Button {
-                    LoginItem.set(launchAtLogin); onboarded = true; showConnect = true
+                    LoginItem.set(launchAtLogin); onboarded = true; openConnect()
                 } label: {
                     Text("Connect Whoop for full data").font(.system(size: 13, weight: .medium))
                         .frame(maxWidth: .infinity).padding(.vertical, 6)
@@ -193,131 +190,6 @@ struct PopoverView: View {
         .padding(24)
         .frame(width: 380)
         .onAppear { launchAtLogin = true }   // default the choice to on
-    }
-
-    // MARK: connect Whoop (guided, in-app)
-
-    private let createAppURL = "https://developer-dashboard.whoop.com/apps/create"
-    private let whoopGuideURL = "https://developer.whoop.com/docs/developing/getting-started"
-    private let redirectURI = "http://localhost:8973/callback"
-    private let privacyURL = "https://github.com/Mahir-Isikli/whoopbar/blob/main/PRIVACY.md"
-
-    private var connectFlow: some View {
-        VStack(alignment: .leading, spacing: 15) {
-            HStack(alignment: .top) {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("Connect Whoop").font(.system(size: 18, weight: .semibold, design: .rounded))
-                    Text("Recovery, Sleep, Strain & HRV — kept on this Mac.")
-                        .font(.system(size: 11)).foregroundStyle(.secondary)
-                }
-                Spacer()
-                Button { showConnect = false } label: {
-                    Image(systemName: "xmark").font(.system(size: 11, weight: .semibold))
-                        .foregroundStyle(.secondary).frame(width: 22, height: 22).background(pal.pillRest).clipShape(Circle())
-                }.buttonStyle(.plain)
-            }
-
-            connectStep(num: 1, title: "Create your Whoop app") {
-                Button { NSWorkspace.shared.open(URL(string: createAppURL)!) } label: {
-                    Label("Open Whoop Developer", systemImage: "arrow.up.forward")
-                        .font(.system(size: 12, weight: .medium)).frame(maxWidth: .infinity).padding(.vertical, 3)
-                }.buttonStyle(.borderedProminent).tint(Metric.recovery.tint)
-                formRow("Name", "anything")
-                formRow("Logo", "skip")
-                formRow("Contacts", "your email")
-                formRow("Privacy", privacyURL, copyable: true)
-                formRow("Redirect", redirectURI, copyable: true)
-                formRow("Scopes", "recovery, sleep, cycles, workout, profile")
-                Text("then Create.").font(.system(size: 11)).foregroundStyle(.secondary)
-            }
-
-            connectStep(num: 2, title: "Paste your keys") {
-                TextField("Client ID", text: $clientId)
-                    .textFieldStyle(.roundedBorder).font(.system(size: 11, design: .monospaced))
-                SecureField("Client Secret", text: $clientSecret)
-                    .textFieldStyle(.roundedBorder).font(.system(size: 11, design: .monospaced))
-            }
-
-            Button { auth.connect(clientId: clientId, clientSecret: clientSecret) } label: {
-                Text("Connect").font(.system(size: 13, weight: .semibold))
-                    .frame(maxWidth: .infinity).padding(.vertical, 6)
-            }
-            .buttonStyle(.borderedProminent).tint(Metric.recovery.tint)
-            .disabled(clientId.isEmpty || clientSecret.isEmpty || auth.status == .connecting || auth.status == .syncing)
-
-            connectStatus
-
-            Link("New to this? Read Whoop's setup guide", destination: URL(string: whoopGuideURL)!)
-                .font(.system(size: 10)).tint(.secondary)
-                .frame(maxWidth: .infinity, alignment: .center)
-        }
-        .padding(20)
-        .frame(width: 380)
-        .onChange(of: auth.status) { _, s in if s == .connected { showConnect = false } }
-    }
-
-    /// One line of the Whoop form, with what to type. Copyable values get a one-tap copy.
-    private func formRow(_ label: String, _ value: String, copyable: Bool = false) -> some View {
-        HStack(alignment: copyable ? .center : .top, spacing: 8) {
-            Text(label).font(.system(size: 11, weight: .semibold)).frame(width: 62, alignment: .leading)
-            if copyable {
-                HStack(spacing: 6) {
-                    Text(value).font(.system(size: 10.5, design: .monospaced)).lineLimit(1).truncationMode(.middle)
-                    Spacer(minLength: 4)
-                    copyButton(value)
-                }
-                .padding(.horizontal, 8).padding(.vertical, 5)
-                .background(pal.pillRest).clipShape(RoundedRectangle(cornerRadius: 6))
-            } else {
-                Text(value).font(.system(size: 11)).foregroundStyle(.secondary)
-                    .frame(maxWidth: .infinity, alignment: .leading).fixedSize(horizontal: false, vertical: true)
-            }
-        }
-    }
-
-    private func copyButton(_ value: String) -> some View {
-        Button {
-            NSPasteboard.general.clearContents(); NSPasteboard.general.setString(value, forType: .string)
-            copiedText = value
-            DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { if copiedText == value { copiedText = nil } }
-        } label: {
-            Image(systemName: copiedText == value ? "checkmark" : "doc.on.doc").font(.system(size: 11, weight: .medium))
-        }
-        .buttonStyle(.plain)
-        .foregroundStyle(copiedText == value ? Metric.recovery.tint : Color.secondary)
-    }
-
-    @ViewBuilder private var connectStatus: some View {
-        switch auth.status {
-        case .connecting:
-            HStack(spacing: 6) { ProgressView().controlSize(.small)
-                Text("Waiting for the Whoop login in your browser…").font(.system(size: 11)).foregroundStyle(.secondary) }
-        case .syncing:
-            HStack(spacing: 6) { ProgressView().controlSize(.small)
-                Text("Fetching your Whoop data…").font(.system(size: 11)).foregroundStyle(.secondary) }
-        case .failed(let msg):
-            Label(msg, systemImage: "exclamationmark.triangle.fill")
-                .font(.system(size: 11)).foregroundStyle(Color(red: 0.9, green: 0.42, blue: 0.4))
-        default:
-            EmptyView()
-        }
-    }
-
-    private func connectStep<C: View>(num: Int, title: String, @ViewBuilder content: () -> C) -> some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack(spacing: 9) {
-                Text("\(num)").font(.system(size: 11, weight: .bold, design: .rounded)).foregroundStyle(.white)
-                    .frame(width: 20, height: 20).background(Circle().fill(Metric.recovery.tint))
-                Text(title).font(.system(size: 13, weight: .semibold))
-            }
-            VStack(alignment: .leading, spacing: 8) { content() }.padding(.leading, 29)
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(14)
-        .background(pal.card)
-        .clipShape(RoundedRectangle(cornerRadius: 14))
-        .overlay(RoundedRectangle(cornerRadius: 14).stroke(pal.hairline, lineWidth: 1))
-        .shadow(color: pal.shadow, radius: 4, y: 1)
     }
 
     // MARK: header
@@ -461,7 +333,7 @@ struct PopoverView: View {
                     Text(store.loading ? "Loading…" : (auth.isConnected ? "No trend data yet" : "Connect Whoop to see your trends"))
                         .font(.system(size: 11)).foregroundStyle(.secondary)
                     if !auth.isConnected && !store.loading {
-                        Button { showConnect = true } label: {
+                        Button { openConnect() } label: {
                             Text("Connect Whoop").font(.system(size: 12, weight: .medium))
                         }.buttonStyle(.borderedProminent).controlSize(.small).tint(Metric.recovery.tint)
                     }

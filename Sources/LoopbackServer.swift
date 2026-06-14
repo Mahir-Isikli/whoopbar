@@ -36,8 +36,26 @@ enum LoopbackServer {
         let request = n > 0 ? (String(bytes: buf[0..<n], encoding: .utf8) ?? "") : ""
         let code = parseCode(request)
 
-        let html = "<html><body style=\"font-family:-apple-system;text-align:center;margin-top:80px;color:#222\">"
-            + "<h2>\u{2713} Connected to WhoopBar</h2><p>You can close this tab and return to the app.</p></body></html>"
+        let html = #"""
+<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>WhoopBar</title>
+<style>
+:root{color-scheme:light dark}
+*{box-sizing:border-box}
+body{margin:0;min-height:100vh;display:flex;align-items:center;justify-content:center;
+ font-family:-apple-system,BlinkMacSystemFont,"SF Pro Text",system-ui,sans-serif;background:#f4f4f6;color:#1c1c1e}
+.card{background:#fff;border-radius:24px;padding:48px 56px;text-align:center;box-shadow:0 18px 50px rgba(0,0,0,.10);max-width:380px}
+.ring{width:66px;height:66px;border-radius:50%;background:#43c785;display:flex;align-items:center;justify-content:center;margin:0 auto 24px}
+.ring svg{width:32px;height:32px}
+h1{font-size:21px;font-weight:600;letter-spacing:-.015em;margin:0 0 8px}
+p{font-size:14px;line-height:1.45;margin:0;opacity:.55}
+@media (prefers-color-scheme:dark){body{background:#161618;color:#f2f2f7}.card{background:#1f1f22;box-shadow:none}}
+</style></head>
+<body><div class="card">
+<div class="ring"><svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l5 5 9-10.5"/></svg></div>
+<h1>Connected to WhoopBar</h1>
+<p>You can close this tab and head back to the app — your data is syncing now.</p>
+</div></body></html>
+"""#
         let resp = "HTTP/1.1 200 OK\r\nContent-Type: text/html; charset=utf-8\r\nConnection: close\r\n"
             + "Content-Length: \(html.utf8.count)\r\n\r\n\(html)"
         _ = resp.withCString { write(client, $0, strlen($0)) }

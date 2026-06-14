@@ -4,6 +4,17 @@ import AppKit
 
 private enum AuthError: Error { case noCreds, badResponse, http }
 
+/// Clean a pasted Client ID / Secret: drop whitespace + invisible chars (WHOOP copies a
+/// trailing newline) and normalize any fancy dash glyphs back to a plain hyphen.
+func cleanCredential(_ s: String) -> String {
+    let dashes: Set<Character> = ["\u{2010}", "\u{2011}", "\u{2012}", "\u{2013}", "\u{2014}", "\u{2015}", "\u{2212}"]
+    let invisibles: Set<Character> = ["\u{200B}", "\u{200C}", "\u{200D}", "\u{FEFF}", "\u{2060}"]
+    return String(s.compactMap { ch -> Character? in
+        if ch.isWhitespace || invisibles.contains(ch) { return nil }
+        return dashes.contains(ch) ? "-" : ch
+    })
+}
+
 private extension CharacterSet {
     static let formValue = CharacterSet(charactersIn:
         "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~")
@@ -41,8 +52,8 @@ final class WhoopAuth: ObservableObject {
     }
 
     func connect(clientId: String, clientSecret: String) {
-        let cid = clientId.trimmingCharacters(in: .whitespacesAndNewlines)
-        let cs = clientSecret.trimmingCharacters(in: .whitespacesAndNewlines)
+        let cid = cleanCredential(clientId)
+        let cs = cleanCredential(clientSecret)
         guard !cid.isEmpty, !cs.isEmpty else { status = .failed("Enter both Client ID and Secret."); return }
         Keychain.set("clientId", cid)
         Keychain.set("clientSecret", cs)
