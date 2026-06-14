@@ -10,36 +10,47 @@ Live WHOOP heart rate in your Mac menu bar, plus a local history you own.
 
 ## Setup
 
-You need: a Mac (macOS 14+) with Bluetooth, a WHOOP strap worn nearby, and Xcode tools (`xcode-select --install`).
+Needs a Mac (macOS 14+) with Bluetooth and a WHOOP strap worn nearby.
 
-### 1. Heart rate, Day view, local history (no account)
+### Option A — Download (no Terminal)
+
+1. Download `WhoopBar.zip` from the [latest release](../../releases/latest).
+2. Unzip, drag **WhoopBar.app** to Applications.
+3. **Right-click it → Open** (once; it's free and unsigned, so macOS asks the first time).
+4. Click **Allow** for Bluetooth. A heart appears in your menu bar.
+5. To start it automatically: System Settings → General → Login Items → **+** → add WhoopBar.
+
+### Option B — Build from source
+
+Needs Xcode tools (`xcode-select --install`).
 
 ```bash
 git clone <this repo> && cd whoop-menubar && ./install.sh
 ```
 
-Click **Allow** when macOS asks for Bluetooth. A heart appears in your menu bar. Done.
+Allow Bluetooth when asked. Installs as a login item that auto-starts.
 
-### 2. Add daily trends (Recovery / HRV / Strain / Sleep)
+### Add the daily trends (Recovery / HRV / Strain / Sleep)
 
-These live in WHOOP's cloud, so this part needs a free **WHOOP developer app** (one-time):
+These live in WHOOP's cloud, so you make a free **WHOOP developer app**. ~5 minutes, once.
 
-1. Go to https://developer.whoop.com, sign in, **Create App**.
-2. Redirect URI: `http://localhost:8080/callback`. Enable scopes: recovery, cycles, sleep, workout, profile, offline.
-3. Copy the **Client ID** and **Client Secret**, then:
-
-```bash
-export WHOOP_CLIENT_ID=...  WHOOP_CLIENT_SECRET=...
-python3 collector/whoop_auth.py        # browser consent, once
-python3 collector/whoop_collector.py   # pulls your history
-```
-
-4. Keep trends fresh, run the collector on a schedule:
+1. Open **https://developer.whoop.com** and sign in with your normal WHOOP login.
+2. Click **Create App** and fill in:
+   - **Name:** anything, e.g. `WhoopBar`
+   - **Redirect URIs:** `http://localhost:8080/callback`
+   - **Scopes:** tick `read:recovery`, `read:cycles`, `read:sleep`, `read:workout`, `read:profile`, `offline`
+   - **Privacy policy / contacts:** any valid URL / your email (required by the form, not used)
+3. Click **Create**. Copy the **Client ID** and **Client Secret** it shows you.
+4. In Terminal, from the project folder:
 
 ```bash
-crontab -e
-# */30 * * * * cd /ABSOLUTE/path/to/whoop-menubar && WHOOP_CLIENT_ID=xxx WHOOP_CLIENT_SECRET=yyy python3 collector/whoop_collector.py
+export WHOOP_CLIENT_ID=paste-id  WHOOP_CLIENT_SECRET=paste-secret
+python3 collector/whoop_auth.py        # a browser opens — click Approve, once
+python3 collector/whoop_collector.py   # pulls your history; trends appear in WhoopBar
+./collector/schedule.sh                # keeps them fresh (runs every 30 min)
 ```
+
+That's it. No re-typing later, `schedule.sh` handles the refresh for you.
 
 ## Where your data lives
 
