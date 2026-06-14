@@ -217,29 +217,21 @@ struct PopoverView: View {
                 }.buttonStyle(.plain)
             }
 
-            Text("Whoop has every app connect through a free developer app. One time, about two minutes.")
-                .font(.system(size: 11)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
-
             connectStep(num: 1, title: "Create your Whoop app") {
                 Button { NSWorkspace.shared.open(URL(string: createAppURL)!) } label: {
                     Label("Open Whoop Developer", systemImage: "arrow.up.forward")
                         .font(.system(size: 12, weight: .medium)).frame(maxWidth: .infinity).padding(.vertical, 3)
                 }.buttonStyle(.borderedProminent).tint(Metric.recovery.tint)
-                Text("Fill Whoop's form exactly like this:")
-                    .font(.system(size: 11, weight: .medium))
-                formRow("Name", "anything (e.g. WhoopBar)")
-                formRow("Logo", "skip it — optional")
-                formRow("Contacts", "your email address")
+                formRow("Name", "anything")
+                formRow("Logo", "skip")
+                formRow("Contacts", "your email")
                 formRow("Privacy", privacyURL, copyable: true)
                 formRow("Redirect", redirectURI, copyable: true)
-                formRow("Scopes", "tick recovery, sleep, cycles, workout, profile")
-                Text("Then click Create at the bottom.")
-                    .font(.system(size: 11)).foregroundStyle(.secondary)
+                formRow("Scopes", "recovery, sleep, cycles, workout, profile")
+                Text("then Create.").font(.system(size: 11)).foregroundStyle(.secondary)
             }
 
             connectStep(num: 2, title: "Paste your keys") {
-                Text("Whoop shows a Client ID and Secret right after you create the app.")
-                    .font(.system(size: 11)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
                 TextField("Client ID", text: $clientId)
                     .textFieldStyle(.roundedBorder).font(.system(size: 11, design: .monospaced))
                 SecureField("Client Secret", text: $clientSecret)
