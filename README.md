@@ -8,35 +8,38 @@ Live WHOOP heart rate in your Mac menu bar, plus a local history you own.
 - Click it for a clean popover: today's recovery / sleep / strain, a **Day view** of today's intraday heart rate, and 7/30/90-day trends. Hover any chart to read the exact value.
 - Logs every heart-rate sample to a **local SQLite** database, so you keep an intraday record the WHOOP API never exposes.
 
-## Requirements
+## Setup
 
-- A Mac with Bluetooth (macOS 14+).
-- A WHOOP strap (4.0 or 5.0), worn and within range.
-- Xcode command line tools (`xcode-select --install`).
+You need: a Mac (macOS 14+) with Bluetooth, a WHOOP strap worn nearby, and Xcode tools (`xcode-select --install`).
 
-## Install (live HR, no account needed)
+### 1. Heart rate, Day view, local history (no account)
 
 ```bash
-git clone <this repo> && cd whoop-menubar
-./install.sh
+git clone <this repo> && cd whoop-menubar && ./install.sh
 ```
 
-A heart appears in your menu bar. Click **Allow** when macOS asks for Bluetooth. Done. Live HR, the Day view, and the local database work immediately.
+Click **Allow** when macOS asks for Bluetooth. A heart appears in your menu bar. Done.
 
-## Optional: daily trends (Recovery / HRV / Strain / Sleep)
+### 2. Add daily trends (Recovery / HRV / Strain / Sleep)
 
-These come from the WHOOP cloud API, so you need your own developer app:
+These live in WHOOP's cloud, so this part needs a free **WHOOP developer app** (one-time):
 
-1. Create one at https://developer.whoop.com with redirect URI `http://localhost:8080/callback`.
-2. Authorize once and pull your history:
+1. Go to https://developer.whoop.com, sign in, **Create App**.
+2. Redirect URI: `http://localhost:8080/callback`. Enable scopes: recovery, cycles, sleep, workout, profile, offline.
+3. Copy the **Client ID** and **Client Secret**, then:
 
 ```bash
 export WHOOP_CLIENT_ID=...  WHOOP_CLIENT_SECRET=...
-python3 collector/whoop_auth.py          # opens browser, saves a token
-python3 collector/whoop_collector.py     # writes history.json the app reads
+python3 collector/whoop_auth.py        # browser consent, once
+python3 collector/whoop_collector.py   # pulls your history
 ```
 
-3. Re-run the collector on a schedule (cron / launchd) to keep trends fresh.
+4. Keep trends fresh, run the collector on a schedule:
+
+```bash
+crontab -e
+# */30 * * * * cd /ABSOLUTE/path/to/whoop-menubar && WHOOP_CLIENT_ID=xxx WHOOP_CLIENT_SECRET=yyy python3 collector/whoop_collector.py
+```
 
 ## Where your data lives
 
