@@ -24,8 +24,22 @@ rm -f build-arm64 build-x86_64
 codesign --force --sign - --identifier com.mahir.whoopbar "$APP"
 
 VER="$(/usr/libexec/PlistBuddy -c 'Print CFBundleShortVersionString' "$APP/Contents/Info.plist" 2>/dev/null || echo 1.0)"
+
+# DMG (preferred for download: preserves the signed bundle better than a .zip, which can
+# corrupt an ad-hoc signature in transit and cause a "damaged" error that xattr can't fix).
+DMG="WhoopBar-$VER.dmg"
+rm -f "$DMG"
+STAGE="$(mktemp -d)"
+cp -R "$APP" "$STAGE/"
+ln -s /Applications "$STAGE/Applications"
+hdiutil create -quiet -volname "WhoopBar" -srcfolder "$STAGE" -ov -format UDZO "$DMG"
+rm -rf "$STAGE"
+
+# Zip too (for Homebrew casks / scripted installs).
 ZIP="WhoopBar-$VER.zip"
 rm -f "$ZIP"
 ditto -c -k --keepParent "$APP" "$ZIP"
-echo "built $ZIP"
+
+echo "built $DMG and $ZIP"
 lipo -archs "$BIN" 2>/dev/null || true
+shasum -a 256 "$DMG" "$ZIP"

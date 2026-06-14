@@ -12,14 +12,28 @@ Live WHOOP heart rate in your Mac menu bar, plus a local history you own.
 
 Needs a Mac (macOS 14+) with Bluetooth and a WHOOP strap worn nearby.
 
-### Option A — Download (no Terminal)
+WhoopBar is free and open source but **not notarized** (that needs a paid $99/yr Apple account), so macOS adds one small first-launch step. Easiest first:
 
-1. Download `WhoopBar.zip` from the [releases page](../../releases).
-2. Unzip, drag **WhoopBar.app** to Applications.
-3. **Right-click it → Open** (once; it's free and unsigned, so macOS asks the first time).
-4. On first launch it asks **"Start automatically at login?"** and sets it for you. Click **Allow** for Bluetooth. A heart appears in your menu bar.
+### Option A — Homebrew (cleanest, opens with no warning)
 
-### Option B — Build from source
+```bash
+brew install --cask Mahir-Isikli/tap/whoopbar
+```
+
+The tap clears the macOS quarantine flag for you, so it just opens. Then allow Bluetooth.
+
+### Option B — Download (no Terminal needed)
+
+1. Download `WhoopBar.dmg` from the [releases page](../../releases).
+2. Open it, drag **WhoopBar.app** to Applications, then open WhoopBar.
+3. macOS blocks it the first time. Get past it **once**, either way:
+   - **No Terminal:** after the warning, go to System Settings → Privacy & Security → scroll down → **Open Anyway** → confirm.
+   - **One command:** `xattr -dr com.apple.quarantine /Applications/WhoopBar.app`, then open it.
+4. It asks **"Start automatically at login?"** and sets it for you. Allow Bluetooth. A heart appears in your menu bar.
+
+> Note: macOS Sequoia (15) removed the old "right-click → Open" shortcut, so the steps above are the current ones.
+
+### Option C — Build from source
 
 Needs Xcode tools (`xcode-select --install`).
 
