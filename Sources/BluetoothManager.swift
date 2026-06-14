@@ -29,6 +29,12 @@ final class BluetoothManager: NSObject, ObservableObject, CBCentralManagerDelega
     private let staleAfter: TimeInterval = 8
     private var staleTimer: Timer?
 
+    // Connect watchdog: CoreBluetooth's connect() never times out on its own, so a weak/half-open
+    // attempt can park us in `.connecting` ("Linking") forever. Abandon it and rescan instead.
+    private var connectTimeout: Timer?
+    private let connectTimeoutAfter: TimeInterval = 12
+    private var lastScanKick = Date.distantPast
+
     override init() {
         super.init()
         // Deliver delegate callbacks on the main queue so we can publish directly.
@@ -43,15 +49,39 @@ final class BluetoothManager: NSObject, ObservableObject, CBCentralManagerDelega
             heartRate = nil                       // signal lost — show "–", not a frozen number
             if state == .connected { state = .searching }
         }
+        // Keep actively looking while unlinked so a strap returning to range reconnects on its own.
+        // (A stalled `.connecting` is handled by the connect watchdog, so don't rescan over it.)
+        if state == .searching, central?.state == .poweredOn,
+           Date().timeIntervalSince(lastScanKick) > 15 {
+            startScan()
+        }
     }
+
+    private func armConnectTimeout() {
+        connectTimeout?.invalidate()
+        connectTimeout = Timer.scheduledTimer(withTimeInterval: connectTimeoutAfter, repeats: false) { [weak self] _ in
+            guard let self, self.state == .connecting, let s = self.strap else { return }
+            DLog.write("connect timed out — cancelling and rescanning")
+            self.central.cancelPeripheralConnection(s)
+            self.state = .searching
+            self.startScan()
+        }
+    }
+
+    private func cancelConnectTimeout() { connectTimeout?.invalidate(); connectTimeout = nil }
 
     private func startScan() {
         guard central.state == .poweredOn else { return }
+        lastScanKick = Date()
         if state != .connected { state = .searching }
         // If the strap is already connected at the OS level, grab it directly (fast attach).
         for p in central.retrieveConnectedPeripherals(withServices: [hrService])
         where (p.name ?? "").uppercased().contains("WHOOP") {
-            strap = p; p.delegate = self; central.connect(p, options: nil); return
+            strap = p; p.delegate = self
+            state = .connecting
+            central.connect(p, options: nil)
+            armConnectTimeout()
+            return
         }
         central.scanForPeripherals(withServices: [hrService], options: nil)
     }
@@ -80,10 +110,12 @@ final class BluetoothManager: NSObject, ObservableObject, CBCentralManagerDelega
         c.stopScan()
         state = .connecting
         c.connect(p, options: nil)
+        armConnectTimeout()
     }
 
     func centralManager(_ c: CBCentralManager, didConnect p: CBPeripheral) {
         DLog.write("connected to \(p.name ?? "?")")
+        cancelConnectTimeout()
         connected = true
         state = .connected
         // Only the two standard services — never the proprietary fd4b service.
@@ -92,8 +124,10 @@ final class BluetoothManager: NSObject, ObservableObject, CBCentralManagerDelega
 
     func centralManager(_ c: CBCentralManager, didDisconnectPeripheral p: CBPeripheral, error: Error?) {
         DLog.write("disconnected (\(error?.localizedDescription ?? "clean"))")
+        cancelConnectTimeout()
         connected = false
         heartRate = nil
+        batteryLevel = nil          // don't show a stale battery % while unlinked
         state = .searching
         // Native pending reconnect: CoreBluetooth completes this automatically — and
         // power-efficiently — the moment the strap is back in range. No polling.
@@ -103,9 +137,11 @@ final class BluetoothManager: NSObject, ObservableObject, CBCentralManagerDelega
 
     func centralManager(_ c: CBCentralManager, didFailToConnect p: CBPeripheral, error: Error?) {
         DLog.write("failed to connect (\(error?.localizedDescription ?? "?"))")
+        cancelConnectTimeout()
         connected = false
         state = .searching
         if let strap { c.connect(strap, options: nil) }   // keep a pending reconnect alive
+        startScan()   // and resume active discovery — connect() alone may never fire
     }
 
     // MARK: CBPeripheralDelegate
