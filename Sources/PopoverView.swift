@@ -96,8 +96,11 @@ struct PopoverView: View {
     @State private var metric: Metric = .recovery
     @State private var range = 30
     @State private var hover: HoverInfo?
+    @AppStorage("onboarded") private var onboarded = false
+    @State private var launchAtLogin = false
 
     private var pal: Pal { Pal(scheme: scheme) }
+    private var showOnboarding: Bool { !onboarded && LoginItem.available }
 
     private var series: [ChartPoint] {
         let cutoff = Calendar.current.date(byAdding: .day, value: -range, to: Date()) ?? .distantPast
@@ -116,32 +119,64 @@ struct PopoverView: View {
     var body: some View {
         ZStack {
             pal.bg.ignoresSafeArea()
-            // Constant-height layout: the same rows render in every mode, so the
-            // menu-bar window never has to animate a resize (that resize is what
-            // crashed AppKit's constraint solver). Only the chart's contents swap.
-            VStack(alignment: .leading, spacing: 14) {
-                header
-                statRow
-                metricPills
-                    .disabled(range == 1)
-                    .opacity(range == 1 ? 0.3 : 1)          // metrics aren't intraday; dim in Day view
-                Text(range == 1 ? "Today's heart rate · logged live on this Mac while connected"
-                                 : metric.explainer)
-                    .font(.system(size: 11)).foregroundStyle(.secondary)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                Group {
-                    if range == 1 { dayChart } else { trendChart }
-                }
-                .transaction { $0.animation = nil }         // swap instantly; never animate a relayout here
-                rangePills
-                footer
-            }
-            .padding(18)
-            .onChange(of: range) { _, newValue in hover = nil; if newValue == 1 { store.loadTodayHR() } }
-            .onChange(of: metric) { _, _ in hover = nil }
+            if showOnboarding { onboarding } else { mainContent }
         }
         .frame(width: 380)
+        .onAppear { launchAtLogin = LoginItem.enabled }
         // No forced color scheme — follows the system, so dark at night.
+    }
+
+    private var mainContent: some View {
+        // Constant-height layout: the same rows render in every mode, so the
+        // menu-bar window never has to animate a resize (that resize is what
+        // crashed AppKit's constraint solver). Only the chart's contents swap.
+        VStack(alignment: .leading, spacing: 14) {
+            header
+            statRow
+            metricPills
+                .disabled(range == 1)
+                .opacity(range == 1 ? 0.3 : 1)          // metrics aren't intraday; dim in Day view
+            Text(range == 1 ? "Today's heart rate · logged live on this Mac while connected"
+                             : metric.explainer)
+                .font(.system(size: 11)).foregroundStyle(.secondary)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            Group {
+                if range == 1 { dayChart } else { trendChart }
+            }
+            .transaction { $0.animation = nil }         // swap instantly; never animate a relayout here
+            rangePills
+            footer
+        }
+        .padding(18)
+        .onChange(of: range) { _, newValue in hover = nil; if newValue == 1 { store.loadTodayHR() } }
+        .onChange(of: metric) { _, _ in hover = nil }
+    }
+
+    // MARK: onboarding (first launch)
+
+    private var onboarding: some View {
+        VStack(spacing: 14) {
+            HeartBeat(active: true)
+                .scaleEffect(1.6)
+                .padding(.bottom, 2)
+            Text("WhoopBar").font(.system(size: 20, weight: .semibold, design: .rounded))
+            Text("Your live heart rate, right in the menu bar.\nHistory stays on this Mac.")
+                .font(.system(size: 12)).foregroundStyle(.secondary).multilineTextAlignment(.center)
+            Toggle("Start automatically at login", isOn: $launchAtLogin)
+                .toggleStyle(.switch).font(.system(size: 12)).tint(Metric.recovery.tint)
+                .padding(.horizontal, 8).fixedSize()
+            Button {
+                LoginItem.set(launchAtLogin)
+                onboarded = true
+            } label: {
+                Text("Get started").font(.system(size: 13, weight: .medium))
+                    .frame(maxWidth: .infinity).padding(.vertical, 6)
+            }
+            .buttonStyle(.borderedProminent).tint(Metric.recovery.tint)
+        }
+        .padding(24)
+        .frame(width: 380)
+        .onAppear { launchAtLogin = true }   // default the choice to on
     }
 
     // MARK: header
@@ -387,6 +422,18 @@ struct PopoverView: View {
         HStack {
             Text(updatedText).font(.system(size: 11)).foregroundStyle(.secondary)
             Spacer()
+            if LoginItem.available {
+                Button {
+                    launchAtLogin.toggle()
+                    LoginItem.set(launchAtLogin)
+                } label: {
+                    Image(systemName: launchAtLogin ? "bolt.circle.fill" : "bolt.circle")
+                        .font(.system(size: 12, weight: .medium))
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(launchAtLogin ? Metric.recovery.tint : Color.secondary)
+                .help("Start WhoopBar at login")
+            }
             Button { store.refresh() } label: {
                 Image(systemName: "arrow.clockwise")
                     .font(.system(size: 12, weight: .medium))

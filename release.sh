@@ -8,7 +8,7 @@ rm -rf "$APP" build-arm64 build-x86_64
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cp Info.plist "$APP/Contents/Info.plist"
 
-COMMON=(-swift-version 5 -O -framework SwiftUI -framework AppKit -framework CoreBluetooth -framework Charts -lsqlite3)
+COMMON=(-swift-version 5 -O -framework SwiftUI -framework AppKit -framework CoreBluetooth -framework Charts -framework ServiceManagement -lsqlite3)
 
 echo "compiling arm64..."
 swiftc -target arm64-apple-macos14.0 "${COMMON[@]}" Sources/*.swift -o build-arm64

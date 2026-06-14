@@ -10,7 +10,8 @@ import http.server, json, os, pathlib, secrets, urllib.parse, urllib.request, we
 
 CLIENT_ID = os.environ["WHOOP_CLIENT_ID"]
 CLIENT_SECRET = os.environ["WHOOP_CLIENT_SECRET"]
-REDIRECT = "http://localhost:8080/callback"
+PORT = int(os.environ.get("WHOOP_REDIRECT_PORT", "8973"))   # uncommon; must match your app's redirect URI
+REDIRECT = f"http://localhost:{PORT}/callback"
 TOKEN_FILE = pathlib.Path(os.environ.get("WHOOP_TOKEN_FILE", os.path.expanduser("~/.whoop/whoop_tokens.json")))
 SCOPES = "offline read:recovery read:cycles read:sleep read:workout read:profile"
 AUTH = "https://api.prod.whoop.com/oauth/oauth2/auth"

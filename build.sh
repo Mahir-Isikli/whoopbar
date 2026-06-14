@@ -12,7 +12,7 @@ cp Info.plist "$APP/Contents/Info.plist"
 
 echo "compiling…"
 swiftc -swift-version 5 -target arm64-apple-macos14.0 \
-    -framework SwiftUI -framework AppKit -framework CoreBluetooth -framework Charts \
+    -framework SwiftUI -framework AppKit -framework CoreBluetooth -framework Charts -framework ServiceManagement \
     -lsqlite3 \
     Sources/*.swift -o "$BIN"
 
