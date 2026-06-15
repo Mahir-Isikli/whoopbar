@@ -1,5 +1,6 @@
 import SwiftUI
 import Charts
+import AppKit
 
 enum Metric: String, CaseIterable, Identifiable {
     case recovery = "Recovery"
@@ -93,6 +94,7 @@ struct PopoverView: View {
     @EnvironmentObject var bt: BluetoothManager
     @EnvironmentObject var store: WhoopStore
     @EnvironmentObject var auth: WhoopAuth
+    @EnvironmentObject var updates: UpdateChecker
     @Environment(\.colorScheme) private var scheme
     @State private var metric: Metric = .recovery
     @State private var range = 30
@@ -445,16 +447,33 @@ struct PopoverView: View {
         HStack {
             Text(updatedText).font(.system(size: 11)).foregroundStyle(.secondary)
             Spacer()
+            if updates.updateAvailable, let v = updates.latest {
+                Button { if let u = updates.releaseURL { NSWorkspace.shared.open(u) } } label: {
+                    HStack(spacing: 4) {
+                        Image(systemName: "arrow.down.circle.fill").font(.system(size: 10))
+                        Text("Update \(v)").font(.system(size: 11, weight: .medium))
+                    }
+                    .padding(.horizontal, 8).padding(.vertical, 3)
+                    .background(Capsule().fill(Metric.recovery.tint.opacity(0.16)))
+                    .foregroundStyle(Metric.recovery.tint)
+                }
+                .buttonStyle(.plain)
+                .help("A newer WhoopBar is available — brew upgrade --cask whoopbar, or click to view")
+            }
             if LoginItem.available {
+                // Drive off the live SMAppService state, not a stale @State mirror: the popover
+                // hierarchy is reused between opens so onAppear won't re-sync, and the user can
+                // also flip this from System Settings. Toggling the live value avoids the
+                // "next press does the opposite" bug.
                 Button {
-                    launchAtLogin.toggle()
-                    LoginItem.set(launchAtLogin)
+                    LoginItem.set(!LoginItem.enabled)
+                    launchAtLogin = LoginItem.enabled   // nudge a redraw + keep the mirror honest
                 } label: {
-                    Image(systemName: launchAtLogin ? "bolt.circle.fill" : "bolt.circle")
+                    Image(systemName: LoginItem.enabled ? "bolt.circle.fill" : "bolt.circle")
                         .font(.system(size: 12, weight: .medium))
                 }
                 .buttonStyle(.plain)
-                .foregroundStyle(launchAtLogin ? Metric.recovery.tint : Color.secondary)
+                .foregroundStyle(LoginItem.enabled ? Metric.recovery.tint : Color.secondary)
                 .help("Start WhoopBar at login")
             }
             Button { store.refresh() } label: {

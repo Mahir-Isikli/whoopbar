@@ -39,9 +39,11 @@ final class BluetoothManager: NSObject, ObservableObject, CBCentralManagerDelega
         super.init()
         // Deliver delegate callbacks on the main queue so we can publish directly.
         central = CBCentralManager(delegate: self, queue: .main)
-        staleTimer = Timer.scheduledTimer(withTimeInterval: 2, repeats: true) { [weak self] _ in
-            self?.checkStale()
-        }
+        // .common mode so the timer keeps firing even while the menu-bar popover is open
+        // (menu tracking switches the run loop out of .default mode, which would pause it).
+        let t = Timer(timeInterval: 2, repeats: true) { [weak self] _ in self?.checkStale() }
+        RunLoop.main.add(t, forMode: .common)
+        staleTimer = t
     }
 
     private func checkStale() {
@@ -59,13 +61,15 @@ final class BluetoothManager: NSObject, ObservableObject, CBCentralManagerDelega
 
     private func armConnectTimeout() {
         connectTimeout?.invalidate()
-        connectTimeout = Timer.scheduledTimer(withTimeInterval: connectTimeoutAfter, repeats: false) { [weak self] _ in
+        let t = Timer(timeInterval: connectTimeoutAfter, repeats: false) { [weak self] _ in
             guard let self, self.state == .connecting, let s = self.strap else { return }
             DLog.write("connect timed out — cancelling and rescanning")
             self.central.cancelPeripheralConnection(s)
             self.state = .searching
             self.startScan()
         }
+        RunLoop.main.add(t, forMode: .common)   // keep firing while the menu is open
+        connectTimeout = t
     }
 
     private func cancelConnectTimeout() { connectTimeout?.invalidate(); connectTimeout = nil }
@@ -78,6 +82,7 @@ final class BluetoothManager: NSObject, ObservableObject, CBCentralManagerDelega
         for p in central.retrieveConnectedPeripherals(withServices: [hrService])
         where (p.name ?? "").uppercased().contains("WHOOP") {
             strap = p; p.delegate = self
+            guard p.state == .disconnected else { return }   // already linking/linked — no duplicate connect
             state = .connecting
             central.connect(p, options: nil)
             armConnectTimeout()
@@ -108,6 +113,10 @@ final class BluetoothManager: NSObject, ObservableObject, CBCentralManagerDelega
         strap = p
         p.delegate = self
         c.stopScan()
+        // If a reconnect is already in flight for this peripheral (e.g. the pending connect from
+        // didDisconnect), don't fire a second connect — two connects mean two didConnect callbacks
+        // and duplicate HR rows.
+        guard p.state == .disconnected else { return }
         state = .connecting
         c.connect(p, options: nil)
         armConnectTimeout()
@@ -147,6 +156,13 @@ final class BluetoothManager: NSObject, ObservableObject, CBCentralManagerDelega
     // MARK: CBPeripheralDelegate
 
     func peripheral(_ p: CBPeripheral, didDiscoverServices error: Error?) {
+        if let error {
+            // Discovery failed — drop the link so the reconnect path restarts cleanly instead of
+            // sitting "connected" with no characteristics subscribed and no HR ever arriving.
+            DLog.write("service discovery failed: \(error.localizedDescription)")
+            central.cancelPeripheralConnection(p)
+            return
+        }
         for s in p.services ?? [] {
             if s.uuid == hrService { p.discoverCharacteristics([hrChar], for: s) }
             if s.uuid == battService { p.discoverCharacteristics([battChar], for: s) }
@@ -161,6 +177,7 @@ final class BluetoothManager: NSObject, ObservableObject, CBCentralManagerDelega
     }
 
     func peripheral(_ p: CBPeripheral, didUpdateValueFor ch: CBCharacteristic, error: Error?) {
+        if error != nil { return }   // on error, ch.value may be stale — don't log a bad reading
         guard let data = ch.value else { return }
         if ch.uuid == hrChar {
             if let hr = Self.parseHeartRate(data) {

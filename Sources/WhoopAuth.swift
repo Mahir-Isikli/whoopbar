@@ -2,7 +2,7 @@ import Foundation
 import SwiftUI
 import AppKit
 
-private enum AuthError: Error { case noCreds, badResponse, http }
+private enum AuthError: Error { case noCreds, badResponse, http(Int), keychainWrite }
 
 /// Clean a pasted Client ID / Secret: drop whitespace + invisible chars (WHOOP copies a
 /// trailing newline) and normalize any fancy dash glyphs back to a plain hyphen.
@@ -40,6 +40,7 @@ final class WhoopAuth: ObservableObject {
     private let scopes = "offline read:recovery read:cycles read:sleep read:workout read:profile"
     private let port: UInt16 = 8973
     private var timer: Timer?
+    private var syncTask: Task<Void, Never>?   // serializes sync(): never two refreshes at once
 
     var isConnected: Bool { switch status { case .connected, .syncing: return true; default: return false } }
 
@@ -58,6 +59,7 @@ final class WhoopAuth: ObservableObject {
         Keychain.set("clientId", cid)
         Keychain.set("clientSecret", cs)
         status = .connecting
+        let expectedState = UUID().uuidString
         Task {
             var comps = URLComponents(string: authBase)!
             comps.queryItems = [
@@ -65,14 +67,19 @@ final class WhoopAuth: ObservableObject {
                 .init(name: "client_id", value: cid),
                 .init(name: "redirect_uri", value: redirect),
                 .init(name: "scope", value: scopes),
-                .init(name: "state", value: UUID().uuidString),
+                .init(name: "state", value: expectedState),
             ]
             guard let authURL = comps.url else { status = .failed("Internal error."); return }
             let codeTask = Task.detached(priority: .userInitiated) { LoopbackServer.listenForCode(port: 8973) }
             NSWorkspace.shared.open(authURL)
-            guard let code = await codeTask.value else {
+            guard let result = await codeTask.value else {
                 status = .failed("Login timed out or was cancelled."); return
             }
+            // Reject a callback whose state doesn't match the one we sent (CSRF protection).
+            guard result.state == expectedState else {
+                status = .failed("Login verification failed. Please try connecting again."); return
+            }
+            let code = result.code
             do {
                 try await exchange(code: code, clientId: cid, clientSecret: cs)
                 await sync()
@@ -84,9 +91,16 @@ final class WhoopAuth: ObservableObject {
     }
 
     func disconnect() {
-        timer?.invalidate(); timer = nil
-        ["clientId", "clientSecret", "accessToken", "refreshToken", "expiry"].forEach { Keychain.set($0, nil) }
+        clearTokens()
+        ["clientId", "clientSecret"].forEach { Keychain.set($0, nil) }
         status = .disconnected
+    }
+
+    /// Drop the OAuth tokens (and stop the refresh timer) but KEEP the client id/secret, so a dead
+    /// token chain doesn't force the user to re-paste their developer credentials on reconnect.
+    private func clearTokens() {
+        timer?.invalidate(); timer = nil
+        ["accessToken", "refreshToken", "expiry"].forEach { Keychain.set($0, nil) }
     }
 
     // MARK: tokens
@@ -115,15 +129,30 @@ final class WhoopAuth: ObservableObject {
     private func saveTokens(_ data: Data) throws {
         guard let j = try JSONSerialization.jsonObject(with: data) as? [String: Any],
               let at = j["access_token"] as? String else { throw AuthError.badResponse }
-        Keychain.set("accessToken", at)
-        if let rt = j["refresh_token"] as? String { Keychain.set("refreshToken", rt) }  // single-use; rotates
         let expIn = (j["expires_in"] as? NSNumber)?.doubleValue ?? 3600
+        // Write the rotating (single-use) refresh token FIRST. If a later write fails, we still
+        // hold the newest refresh token rather than a consumed one, so we can recover.
+        if let rt = j["refresh_token"] as? String {
+            guard Keychain.set("refreshToken", rt) else { throw AuthError.keychainWrite }
+        }
+        guard Keychain.set("accessToken", at) else { throw AuthError.keychainWrite }
         Keychain.set("expiry", String(Date().addingTimeInterval(expIn - 60).timeIntervalSince1970))
     }
 
     // MARK: sync
 
+    /// Coalescing entry point: if a sync is already running, join it instead of starting a second.
+    /// This guarantees only one token refresh is ever in flight, so the single-use rotating
+    /// refresh token can never be spent twice (which would revoke the whole chain).
     func sync() async {
+        if let running = syncTask { await running.value; return }
+        let task = Task { await runSync() }
+        syncTask = task
+        await task.value
+        syncTask = nil
+    }
+
+    private func runSync() async {
         guard Keychain.get("refreshToken") != nil else { return }
         if isConnected { status = .syncing }
         do {
@@ -137,7 +166,16 @@ final class WhoopAuth: ObservableObject {
             writeHistory(days)
             status = .connected
             NotificationCenter.default.post(name: Self.historyUpdated, object: nil)
+        } catch AuthError.http(let code) where code == 400 || code == 401 {
+            // Refresh token rejected / access token invalid: the token chain is dead. Drop the
+            // tokens and require a reconnect instead of retrying a consumed token forever.
+            clearTokens()
+            status = .failed("Whoop sign-in expired. Reconnect from the menu.")
+        } catch AuthError.keychainWrite {
+            clearTokens()
+            status = .failed("Couldn't save your Whoop login. Reconnect from the menu.")
         } catch {
+            // Transient (network, rate limit, 5xx): keep the connection and let the timer retry.
             status = .failed("Sync failed. Open the menu to retry.")
         }
     }
@@ -145,7 +183,7 @@ final class WhoopAuth: ObservableObject {
     private func startTimer() {
         timer?.invalidate()
         timer = Timer.scheduledTimer(withTimeInterval: 1800, repeats: true) { [weak self] _ in
-            Task { await self?.sync() }
+            Task { @MainActor [weak self] in await self?.sync() }
         }
     }
 
@@ -160,7 +198,9 @@ final class WhoopAuth: ObservableObject {
             "\($0.key)=\($0.value.addingPercentEncoding(withAllowedCharacters: .formValue) ?? $0.value)"
         }.joined(separator: "&").data(using: .utf8)
         let (data, resp) = try await URLSession.shared.data(for: req)
-        guard let http = resp as? HTTPURLResponse, (200..<300).contains(http.statusCode) else { throw AuthError.http }
+        guard let http = resp as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
+            throw AuthError.http((resp as? HTTPURLResponse)?.statusCode ?? -1)
+        }
         return data
     }
 
@@ -172,7 +212,9 @@ final class WhoopAuth: ObservableObject {
             req.setValue("Bearer " + token, forHTTPHeaderField: "Authorization")
             req.setValue("whoopbar/1.0", forHTTPHeaderField: "User-Agent")
             let (data, resp) = try await URLSession.shared.data(for: req)
-            guard let http = resp as? HTTPURLResponse, (200..<300).contains(http.statusCode) else { throw AuthError.http }
+            guard let http = resp as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
+            throw AuthError.http((resp as? HTTPURLResponse)?.statusCode ?? -1)
+        }
             let j = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] ?? [:]
             out += (j["records"] as? [[String: Any]]) ?? []
             if let nt = j["next_token"] as? String, !nt.isEmpty {

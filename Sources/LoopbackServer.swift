@@ -5,7 +5,7 @@ import Darwin
 /// WHOOP redirects the browser to http://localhost:8973/callback?code=… and this catches it.
 /// Loopback-only bind, so no macOS incoming-connection firewall prompt.
 enum LoopbackServer {
-    static func listenForCode(port: UInt16, timeoutSec: Int32 = 300) -> String? {
+    static func listenForCode(port: UInt16, timeoutSec: Int32 = 300) -> (code: String, state: String?)? {
         let fd = socket(AF_INET, SOCK_STREAM, 0)
         guard fd >= 0 else { return nil }
         defer { close(fd) }
@@ -31,10 +31,17 @@ enum LoopbackServer {
         guard client >= 0 else { return nil }
         defer { close(client) }
 
+        // Accumulate until the end of the HTTP headers — TCP may split the request across reads,
+        // even on loopback. (Bounded so a malformed/huge request can't spin forever.)
+        var request = ""
         var buf = [UInt8](repeating: 0, count: 8192)
-        let n = read(client, &buf, buf.count)
-        let request = n > 0 ? (String(bytes: buf[0..<n], encoding: .utf8) ?? "") : ""
-        let code = parseCode(request)
+        while !request.contains("\r\n\r\n") {
+            let n = read(client, &buf, buf.count)
+            if n <= 0 { break }
+            request += String(bytes: buf[0..<n], encoding: .utf8) ?? ""
+            if request.utf8.count > 65_536 { break }
+        }
+        let parsed = parseCode(request)
 
         let html = #"""
 <!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>WhoopBar</title>
@@ -59,18 +66,26 @@ p{font-size:14px;line-height:1.45;margin:0;opacity:.55}
         let resp = "HTTP/1.1 200 OK\r\nContent-Type: text/html; charset=utf-8\r\nConnection: close\r\n"
             + "Content-Length: \(html.utf8.count)\r\n\r\n\(html)"
         _ = resp.withCString { write(client, $0, strlen($0)) }
-        return code
+        return parsed
     }
 
-    private static func parseCode(_ request: String) -> String? {
+    /// Extract `code` and `state` from the redirect request line. Only accepts the /callback path,
+    /// so stray browser fetches (favicon, preconnect) on this port can't be mistaken for the redirect.
+    private static func parseCode(_ request: String) -> (code: String, state: String?)? {
         guard let firstLine = request.split(separator: "\r\n").first else { return nil }
         let parts = firstLine.split(separator: " ")
-        guard parts.count >= 2 else { return nil }
+        guard parts.count >= 2, parts[1].hasPrefix("/callback") else { return nil }
         guard let query = parts[1].split(separator: "?").dropFirst().first else { return nil }
+        var code: String?
+        var state: String?
         for pair in query.split(separator: "&") {
             let kv = pair.split(separator: "=", maxSplits: 1)
-            if kv.first == "code", kv.count == 2 { return String(kv[1]).removingPercentEncoding }
+            guard kv.count == 2 else { continue }
+            let value = String(kv[1]).removingPercentEncoding
+            if kv[0] == "code" { code = value }
+            else if kv[0] == "state" { state = value }
         }
-        return nil
+        guard let code else { return nil }
+        return (code, state)
     }
 }

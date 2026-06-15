@@ -5,6 +5,7 @@ cd "$(dirname "$0")"
 
 APP="WhoopBar.app"; BIN="$APP/Contents/MacOS/WhoopBar"
 rm -rf "$APP" build-arm64 build-x86_64
+rm -f WhoopBar-*.dmg WhoopBar-*.zip WhoopBar.dmg WhoopBar.zip   # sweep stale artifacts
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cp Info.plist "$APP/Contents/Info.plist"
 
@@ -23,13 +24,15 @@ rm -f build-arm64 build-x86_64
 
 codesign --force --sign - --identifier com.mahir.whoopbar "$APP"
 
-VER="$(/usr/libexec/PlistBuddy -c 'Print CFBundleShortVersionString' "$APP/Contents/Info.plist" 2>/dev/null || echo 1.0)"
+VER="$(/usr/libexec/PlistBuddy -c 'Print CFBundleShortVersionString' "$APP/Contents/Info.plist")" \
+    || { echo 'ERROR: could not read CFBundleShortVersionString from Info.plist'; exit 1; }
 
 # DMG (preferred for download: preserves the signed bundle better than a .zip, which can
 # corrupt an ad-hoc signature in transit and cause a "damaged" error that xattr can't fix).
 DMG="WhoopBar-$VER.dmg"
 rm -f "$DMG"
 STAGE="$(mktemp -d)"
+trap 'rm -rf "$STAGE"' EXIT     # clean the staging copy even if hdiutil fails
 cp -R "$APP" "$STAGE/"
 ln -s /Applications "$STAGE/Applications"
 hdiutil create -quiet -volname "WhoopBar" -srcfolder "$STAGE" -ov -format UDZO "$DMG"
@@ -40,6 +43,11 @@ ZIP="WhoopBar-$VER.zip"
 rm -f "$ZIP"
 ditto -c -k --keepParent "$APP" "$ZIP"
 
-echo "built $DMG and $ZIP"
+# Unversioned copies: the Homebrew cask URL points at a stable WhoopBar.dmg filename, so ship.sh
+# can upload these as release assets without a manual rename step.
+cp "$DMG" WhoopBar.dmg
+cp "$ZIP" WhoopBar.zip
+
+echo "built $DMG and $ZIP (+ unversioned copies)"
 lipo -archs "$BIN" 2>/dev/null || true
-shasum -a 256 "$DMG" "$ZIP"
+shasum -a 256 "$DMG" WhoopBar.dmg

@@ -29,10 +29,22 @@ final class LocalDB {
             exec("CREATE TABLE IF NOT EXISTS hr_samples (ts INTEGER PRIMARY KEY, bpm INTEGER);")
             exec("CREATE TABLE IF NOT EXISTS daily (date TEXT PRIMARY KEY, recovery REAL, hrv REAL, rhr REAL, strain REAL, sleep_perf REAL, sleep_hours REAL);")
             exec("DELETE FROM hr_samples WHERE ts < \(Int(Date().timeIntervalSince1970) - 90 * 86400);")  // 90-day retention
+        } else {
+            // open failed: sqlite3_open leaves a non-nil error handle — close it and go to a
+            // clean nil so every later call is a safe no-op instead of an SQLITE_MISUSE zombie.
+            DLog.write("LocalDB open failed: \(String(cString: sqlite3_errmsg(db)))")
+            sqlite3_close(db)
+            db = nil
         }
     }
 
-    private func exec(_ sql: String) { sqlite3_exec(db, sql, nil, nil, nil) }
+    private func exec(_ sql: String) {
+        var err: UnsafeMutablePointer<CChar>?
+        if sqlite3_exec(db, sql, nil, nil, &err) != SQLITE_OK, let err {
+            DLog.write("LocalDB exec error: \(String(cString: err))")
+            sqlite3_free(err)
+        }
+    }
 
     func insertHR(_ bpm: Int) {
         let ts = Int(Date().timeIntervalSince1970)

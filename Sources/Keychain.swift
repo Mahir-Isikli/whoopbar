@@ -6,17 +6,25 @@ import Security
 enum Keychain {
     private static let service = "com.mahir.whoopbar"
 
-    static func set(_ key: String, _ value: String?) {
+    /// Writes (or, with a nil value, deletes) a credential. Returns false if the add failed so
+    /// callers writing rotating tokens can detect a half-written state instead of silently
+    /// losing a single-use refresh token.
+    @discardableResult
+    static func set(_ key: String, _ value: String?) -> Bool {
         let base: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: service,
             kSecAttrAccount as String: key,
         ]
         SecItemDelete(base as CFDictionary)
-        guard let value, let data = value.data(using: .utf8) else { return }
+        guard let value, let data = value.data(using: .utf8) else { return true }
         var add = base
         add[kSecValueData as String] = data
-        SecItemAdd(add as CFDictionary, nil)
+        // Keep tokens on THIS device only and never let them sync to iCloud Keychain.
+        add[kSecAttrAccessible as String] = kSecAttrAccessibleWhenUnlockedThisDeviceOnly
+        add[kSecAttrSynchronizable as String] = false
+        let status = SecItemAdd(add as CFDictionary, nil)
+        return status == errSecSuccess
     }
 
     static func get(_ key: String) -> String? {

@@ -5,6 +5,7 @@ struct WhoopBarApp: App {
     @StateObject private var bt = BluetoothManager()
     @StateObject private var store = WhoopStore()
     @StateObject private var auth = WhoopAuth()
+    @StateObject private var updates = UpdateChecker()
 
     var body: some Scene {
         MenuBarExtra {
@@ -12,6 +13,7 @@ struct WhoopBarApp: App {
                 .environmentObject(bt)
                 .environmentObject(store)
                 .environmentObject(auth)
+                .environmentObject(updates)
         } label: {
             // Live heart rate in the menu bar; "–" when the strap isn't connected.
             Image(systemName: bt.heartRate != nil ? "heart.fill" : "heart")
