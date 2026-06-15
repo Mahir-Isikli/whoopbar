@@ -45,7 +45,8 @@ final class WhoopAuth: ObservableObject {
     var isConnected: Bool { switch status { case .connected, .syncing: return true; default: return false } }
 
     init() {
-        if Keychain.get("refreshToken") != nil {
+        Secrets.migrateFromKeychainIfNeeded()   // move tokens off the Keychain (stops the password prompts)
+        if Secrets.get("refreshToken") != nil {
             status = .connected
             startTimer()
             Task { await sync() }
@@ -56,8 +57,8 @@ final class WhoopAuth: ObservableObject {
         let cid = cleanCredential(clientId)
         let cs = cleanCredential(clientSecret)
         guard !cid.isEmpty, !cs.isEmpty else { status = .failed("Enter both Client ID and Secret."); return }
-        Keychain.set("clientId", cid)
-        Keychain.set("clientSecret", cs)
+        Secrets.set("clientId", cid)
+        Secrets.set("clientSecret", cs)
         status = .connecting
         let expectedState = UUID().uuidString
         Task {
@@ -92,7 +93,7 @@ final class WhoopAuth: ObservableObject {
 
     func disconnect() {
         clearTokens()
-        ["clientId", "clientSecret"].forEach { Keychain.set($0, nil) }
+        ["clientId", "clientSecret"].forEach { Secrets.set($0, nil) }
         status = .disconnected
     }
 
@@ -100,7 +101,7 @@ final class WhoopAuth: ObservableObject {
     /// token chain doesn't force the user to re-paste their developer credentials on reconnect.
     private func clearTokens() {
         timer?.invalidate(); timer = nil
-        ["accessToken", "refreshToken", "expiry"].forEach { Keychain.set($0, nil) }
+        ["accessToken", "refreshToken", "expiry"].forEach { Secrets.set($0, nil) }
     }
 
     // MARK: tokens
@@ -114,11 +115,11 @@ final class WhoopAuth: ObservableObject {
     }
 
     private func refreshIfNeeded() async throws {
-        let exp = Double(Keychain.get("expiry") ?? "0") ?? 0
-        if Keychain.get("accessToken") != nil, Date().timeIntervalSince1970 < exp { return }
-        guard let rt = Keychain.get("refreshToken"),
-              let cid = Keychain.get("clientId"),
-              let cs = Keychain.get("clientSecret") else { throw AuthError.noCreds }
+        let exp = Double(Secrets.get("expiry") ?? "0") ?? 0
+        if Secrets.get("accessToken") != nil, Date().timeIntervalSince1970 < exp { return }
+        guard let rt = Secrets.get("refreshToken"),
+              let cid = Secrets.get("clientId"),
+              let cs = Secrets.get("clientSecret") else { throw AuthError.noCreds }
         let data = try await postForm(tokenURL, [
             "grant_type": "refresh_token", "refresh_token": rt,
             "client_id": cid, "client_secret": cs, "scope": "offline",
@@ -133,10 +134,10 @@ final class WhoopAuth: ObservableObject {
         // Write the rotating (single-use) refresh token FIRST. If a later write fails, we still
         // hold the newest refresh token rather than a consumed one, so we can recover.
         if let rt = j["refresh_token"] as? String {
-            guard Keychain.set("refreshToken", rt) else { throw AuthError.keychainWrite }
+            guard Secrets.set("refreshToken", rt) else { throw AuthError.keychainWrite }
         }
-        guard Keychain.set("accessToken", at) else { throw AuthError.keychainWrite }
-        Keychain.set("expiry", String(Date().addingTimeInterval(expIn - 60).timeIntervalSince1970))
+        guard Secrets.set("accessToken", at) else { throw AuthError.keychainWrite }
+        Secrets.set("expiry", String(Date().addingTimeInterval(expIn - 60).timeIntervalSince1970))
     }
 
     // MARK: sync
@@ -153,11 +154,11 @@ final class WhoopAuth: ObservableObject {
     }
 
     private func runSync() async {
-        guard Keychain.get("refreshToken") != nil else { return }
+        guard Secrets.get("refreshToken") != nil else { return }
         if isConnected { status = .syncing }
         do {
             try await refreshIfNeeded()
-            guard let at = Keychain.get("accessToken") else { throw AuthError.noCreds }
+            guard let at = Secrets.get("accessToken") else { throw AuthError.noCreds }
             async let rec = fetchAll("/v2/recovery", at)
             async let slp = fetchAll("/v2/activity/sleep", at)
             async let cyc = fetchAll("/v2/cycle", at)

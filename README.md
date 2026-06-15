@@ -85,6 +85,7 @@ brew upgrade --cask whoopbar
 
 - `whoop-local.db` - SQLite: live HR samples + daily history.
 - `history.json` - daily series for the charts.
+- `credentials.json` - your WHOOP API tokens (private to your user account, `0600`).
 
 Everything stays on your machine. Nothing is uploaded.
 

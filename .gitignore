@@ -6,4 +6,5 @@ WhoopBar.app/
 *.db-wal
 *.db-shm
 whoop_tokens.json
+credentials.json
 .DS_Store
