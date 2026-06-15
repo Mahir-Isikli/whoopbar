@@ -69,6 +69,16 @@ python3 collector/whoop_collector.py   # pulls history
 ```
 </details>
 
+## Updating
+
+WhoopBar checks GitHub once a day and shows a small **Update** pill in the popover when a newer version is out. To update:
+
+```bash
+brew upgrade --cask whoopbar
+```
+
+(Downloaded directly instead? Just grab the latest `WhoopBar.dmg` from the [releases page](../../releases) and replace the app.)
+
 ## Where your data lives
 
 `~/Library/Application Support/WhoopBar/`
@@ -82,6 +92,16 @@ Everything stays on your machine. Nothing is uploaded.
 
 - Capture pauses while the Mac sleeps (Bluetooth suspends), so the intraday trace has gaps overnight.
 - To rename for yourself, change the bundle id in `Info.plist`; you will grant Bluetooth once on first launch.
+
+## Releasing (maintainer)
+
+Bump `CFBundleShortVersionString` + `CFBundleVersion` in `Info.plist`, commit, then:
+
+```bash
+./ship.sh
+```
+
+One command builds the universal DMG, pushes the tag, publishes the GitHub release, and bumps + pushes the Homebrew cask. Users then get it via `brew upgrade` or the in-app pill.
 
 ## License
 
