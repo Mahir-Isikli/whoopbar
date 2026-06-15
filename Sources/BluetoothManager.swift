@@ -140,8 +140,9 @@ final class BluetoothManager: NSObject, ObservableObject, CBCentralManagerDelega
         state = .searching
         // Native pending reconnect: CoreBluetooth completes this automatically — and
         // power-efficiently — the moment the strap is back in range. No polling.
-        if let strap { c.connect(strap, options: nil) }
-        startScan()   // fallback discovery path
+        // Only when the radio is on: a connect() while powered off fails instantly and busy-loops.
+        if c.state == .poweredOn, let strap { c.connect(strap, options: nil) }
+        startScan()   // fallback discovery path (no-op unless powered on)
     }
 
     func centralManager(_ c: CBCentralManager, didFailToConnect p: CBPeripheral, error: Error?) {
@@ -149,8 +150,9 @@ final class BluetoothManager: NSObject, ObservableObject, CBCentralManagerDelega
         cancelConnectTimeout()
         connected = false
         state = .searching
-        if let strap { c.connect(strap, options: nil) }   // keep a pending reconnect alive
-        startScan()   // and resume active discovery — connect() alone may never fire
+        // Only retry when powered on — a connect() while the radio is off fails instantly and loops.
+        if c.state == .poweredOn, let strap { c.connect(strap, options: nil) }
+        startScan()   // resume active discovery (no-op unless powered on)
     }
 
     // MARK: CBPeripheralDelegate
