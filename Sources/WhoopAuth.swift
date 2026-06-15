@@ -245,7 +245,11 @@ final class WhoopAuth: ObservableObject {
         }
         let scored = cycles.filter { ($0["score_state"] as? String) == "SCORED" }
             .sorted { (($0["start"] as? String) ?? "") < (($1["start"] as? String) ?? "") }
-        var days: [DayPoint] = []
+        // WHOOP "cycles" are physiological days (wake-to-wake), so two cycles can fall on the same
+        // calendar date while another date has none. Collapse to one representative point per date,
+        // preferring the cycle that actually has a recovery score, then the one with more sleep,
+        // then more strain — that's the "main" day, matching what the WHOOP app shows.
+        var byDate: [String: DayPoint] = [:]
         for c in scored {
             guard let cid = inum(c["id"]) else { continue }
             let cs = (c["score"] as? [String: Any]) ?? [:]
@@ -256,16 +260,23 @@ final class WhoopAuth: ObservableObject {
                 let awake = dnum(b.ss["total_awake_time_milli"]) ?? 0
                 sleepHours = ((inbed - awake) / 3_600_000).rounded(toPlaces: 2)
             }
-            days.append(DayPoint(
+            let dp = DayPoint(
                 date: String(((c["start"] as? String) ?? "").prefix(10)),
                 strain: dnum(cs["strain"]).map { $0.rounded(toPlaces: 2) },
                 recovery: dnum(r["recovery_score"]),
                 hrv: dnum(r["hrv_rmssd_milli"]).map { $0.rounded(toPlaces: 1) },
                 rhr: dnum(r["resting_heart_rate"]),
                 sleep_perf: best[cid].flatMap { dnum($0.score["sleep_performance_percentage"]) },
-                sleep_hours: sleepHours))
+                sleep_hours: sleepHours)
+            if let existing = byDate[dp.date], rank(existing) >= rank(dp) { continue }
+            byDate[dp.date] = dp
         }
-        return days
+        return byDate.values.sorted { $0.date < $1.date }
+    }
+
+    /// Higher = better representative of a calendar day: has recovery first, then more sleep, then strain.
+    private func rank(_ d: DayPoint) -> Double {
+        (d.recovery != nil ? 1_000_000 : 0) + (d.sleep_hours ?? 0) * 1_000 + (d.strain ?? 0)
     }
 
     private func writeHistory(_ days: [DayPoint]) {

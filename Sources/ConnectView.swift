@@ -135,9 +135,14 @@ struct ConnectView: View {
     }
 
     private func pasteField(_ placeholder: String, text: Binding<String>, secure: Bool = false) -> some View {
-        HStack(spacing: 6) {
+        // Sanitize on the binding so Cmd+V, typing, and the Paste button all yield a valid value:
+        // WHOOP's dashboard copies the UUID with fancy dashes + a trailing newline, which the
+        // OAuth call rejects. cleanCredential normalizes those.
+        let cleaned = Binding(get: { text.wrappedValue },
+                              set: { text.wrappedValue = cleanCredential($0) })
+        return HStack(spacing: 6) {
             Group {
-                if secure { SecureField(placeholder, text: text) } else { TextField(placeholder, text: text) }
+                if secure { SecureField(placeholder, text: cleaned) } else { TextField(placeholder, text: cleaned) }
             }
             .textFieldStyle(.roundedBorder).font(.system(size: 11, design: .monospaced))
             Button { text.wrappedValue = cleanCredential(NSPasteboard.general.string(forType: .string) ?? "") } label: {
