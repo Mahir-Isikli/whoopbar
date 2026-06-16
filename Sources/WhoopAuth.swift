@@ -2,7 +2,7 @@ import Foundation
 import SwiftUI
 import AppKit
 
-private enum AuthError: Error { case noCreds, badResponse, http(Int), keychainWrite }
+private enum AuthError: Error { case noCreds, badResponse, http(Int), writeFailed }
 
 /// Clean a pasted Client ID / Secret: drop whitespace + invisible chars (WHOOP copies a
 /// trailing newline) and normalize any fancy dash glyphs back to a plain hyphen.
@@ -24,7 +24,7 @@ private extension Double {
 }
 
 /// In-app WHOOP connection (Model A: the user's OWN developer app). Does the OAuth loopback
-/// flow, stores credentials/tokens in the Keychain, fetches recovery/sleep/cycle/workout, and
+/// flow, stores credentials/tokens in a local file (Secrets), fetches recovery/sleep/cycle/workout, and
 /// writes the same history.json the charts read. No Terminal, no Python. Refreshes on a timer.
 @MainActor
 final class WhoopAuth: ObservableObject {
@@ -45,7 +45,6 @@ final class WhoopAuth: ObservableObject {
     var isConnected: Bool { switch status { case .connected, .syncing: return true; default: return false } }
 
     init() {
-        Secrets.migrateFromKeychainIfNeeded()   // move tokens off the Keychain (stops the password prompts)
         if Secrets.get("refreshToken") != nil {
             status = .connected
             startTimer()
@@ -134,9 +133,9 @@ final class WhoopAuth: ObservableObject {
         // Write the rotating (single-use) refresh token FIRST. If a later write fails, we still
         // hold the newest refresh token rather than a consumed one, so we can recover.
         if let rt = j["refresh_token"] as? String {
-            guard Secrets.set("refreshToken", rt) else { throw AuthError.keychainWrite }
+            guard Secrets.set("refreshToken", rt) else { throw AuthError.writeFailed }
         }
-        guard Secrets.set("accessToken", at) else { throw AuthError.keychainWrite }
+        guard Secrets.set("accessToken", at) else { throw AuthError.writeFailed }
         Secrets.set("expiry", String(Date().addingTimeInterval(expIn - 60).timeIntervalSince1970))
     }
 
@@ -172,7 +171,7 @@ final class WhoopAuth: ObservableObject {
             // tokens and require a reconnect instead of retrying a consumed token forever.
             clearTokens()
             status = .failed("Whoop sign-in expired. Reconnect from the menu.")
-        } catch AuthError.keychainWrite {
+        } catch AuthError.writeFailed {
             clearTokens()
             status = .failed("Couldn't save your Whoop login. Reconnect from the menu.")
         } catch {

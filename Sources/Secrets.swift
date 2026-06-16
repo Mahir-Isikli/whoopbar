@@ -38,16 +38,4 @@ enum Secrets {
             return true
         } catch { return false }
     }
-
-    /// One-time move of tokens out of the old Keychain so existing users stay logged in. Reading the
-    /// Keychain here may prompt once (the binary's signature no longer matches the item's ACL), but
-    /// after this the file is the source of truth and the Keychain is never touched again.
-    static func migrateFromKeychainIfNeeded() {
-        guard get("refreshToken") == nil else { return }   // already on the file store
-        var moved = false
-        for k in ["clientId", "clientSecret", "accessToken", "refreshToken", "expiry"] {
-            if let v = Keychain.get(k) { set(k, v); moved = true }
-        }
-        if moved { DLog.write("migrated WHOOP tokens from Keychain to credentials.json") }
-    }
 }
