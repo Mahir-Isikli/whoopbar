@@ -15,6 +15,12 @@ final class BluetoothManager: NSObject, ObservableObject, CBCentralManagerDelega
 
     enum Status { case unknown, off, searching, connecting, connected }
 
+    /// The strap battery is treated as "low" once it drops below this percentage.
+    static let lowBatteryThreshold = 30
+    /// True only when we have a reading and it's below the low threshold — drives the
+    /// menu-bar + popover low-battery alert. Unknown battery is never "low".
+    var batteryLow: Bool { (batteryLevel ?? 100) < Self.lowBatteryThreshold }
+
     private var central: CBCentralManager!
     private var strap: CBPeripheral?
 

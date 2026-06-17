@@ -230,8 +230,12 @@ struct PopoverView: View {
                 Text(text).font(.system(size: 12, weight: .medium)).foregroundStyle(.secondary)
             }
             if let b = bt.batteryLevel {
+                // Turn the battery readout red once it's low, so the popover echoes the
+                // menu-bar alert (the same warning red used for "BT off").
                 Label("\(b)%", systemImage: batteryIcon(b))
-                    .font(.system(size: 11)).foregroundStyle(.secondary).labelStyle(.titleAndIcon)
+                    .font(.system(size: 11))
+                    .foregroundStyle(bt.batteryLow ? Color(red: 0.96, green: 0.46, blue: 0.43) : .secondary)
+                    .labelStyle(.titleAndIcon)
             }
         }
     }
