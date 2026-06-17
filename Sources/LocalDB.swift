@@ -27,8 +27,10 @@ final class LocalDB {
         if sqlite3_open(path, &db) == SQLITE_OK {
             exec("PRAGMA journal_mode=WAL;")
             exec("CREATE TABLE IF NOT EXISTS hr_samples (ts INTEGER PRIMARY KEY, bpm INTEGER);")
+            exec("CREATE TABLE IF NOT EXISTS battery_samples (ts INTEGER PRIMARY KEY, level INTEGER);")
             exec("CREATE TABLE IF NOT EXISTS daily (date TEXT PRIMARY KEY, recovery REAL, hrv REAL, rhr REAL, strain REAL, sleep_perf REAL, sleep_hours REAL);")
             exec("DELETE FROM hr_samples WHERE ts < \(Int(Date().timeIntervalSince1970) - 90 * 86400);")  // 90-day retention
+            exec("DELETE FROM battery_samples WHERE ts < \(Int(Date().timeIntervalSince1970) - 90 * 86400);")
         } else {
             // open failed: sqlite3_open leaves a non-nil error handle — close it and go to a
             // clean nil so every later call is a safe no-op instead of an SQLITE_MISUSE zombie.
@@ -57,6 +59,38 @@ final class LocalDB {
             }
             sqlite3_finalize(st)
         }
+    }
+
+    /// Record a battery reading. Callers should only insert on a *change* in level, so each
+    /// row marks a real transition point — exactly what the discharge-rate estimate reads back.
+    func insertBattery(_ level: Int) {
+        let ts = Int(Date().timeIntervalSince1970)
+        q.async {
+            var st: OpaquePointer?
+            if sqlite3_prepare_v2(self.db, "INSERT OR REPLACE INTO battery_samples (ts,level) VALUES (?,?)", -1, &st, nil) == SQLITE_OK {
+                sqlite3_bind_int64(st, 1, sqlite3_int64(ts))
+                sqlite3_bind_int(st, 2, Int32(level))
+                sqlite3_step(st)
+            }
+            sqlite3_finalize(st)
+        }
+    }
+
+    /// Battery readings on or after `since`, oldest first.
+    func batterySamples(since: Date) -> [BatterySample] {
+        var out: [BatterySample] = []
+        q.sync {
+            var st: OpaquePointer?
+            if sqlite3_prepare_v2(self.db, "SELECT ts,level FROM battery_samples WHERE ts>=? ORDER BY ts", -1, &st, nil) == SQLITE_OK {
+                sqlite3_bind_int64(st, 1, sqlite3_int64(Int(since.timeIntervalSince1970)))
+                while sqlite3_step(st) == SQLITE_ROW {
+                    out.append(BatterySample(date: Date(timeIntervalSince1970: TimeInterval(sqlite3_column_int64(st, 0))),
+                                             level: Int(sqlite3_column_int(st, 1))))
+                }
+            }
+            sqlite3_finalize(st)
+        }
+        return out
     }
 
     func upsertDaily(_ d: DayPoint) {

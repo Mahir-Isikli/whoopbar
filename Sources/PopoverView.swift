@@ -236,6 +236,12 @@ struct PopoverView: View {
                     .font(.system(size: 11))
                     .foregroundStyle(bt.batteryLow ? Color(red: 0.96, green: 0.46, blue: 0.43) : .secondary)
                     .labelStyle(.titleAndIcon)
+                if let days = bt.batteryDaysLeft {
+                    // Estimated time left on this charge, inferred from the discharge rate.
+                    Text(batteryLeftText(days))
+                        .font(.system(size: 9)).foregroundStyle(.tertiary)
+                        .help("Estimated from how fast your strap has been discharging")
+                }
             }
         }
     }
@@ -243,6 +249,16 @@ struct PopoverView: View {
     private func batteryIcon(_ b: Int) -> String {
         switch b { case ..<13: return "battery.0percent"; case ..<38: return "battery.25percent"
         case ..<63: return "battery.50percent"; case ..<88: return "battery.75percent"; default: return "battery.100percent" }
+    }
+
+    /// Compact "left on this charge" label from the estimated days remaining.
+    private func batteryLeftText(_ days: Double) -> String {
+        if days >= 1 {
+            let d = Int(days.rounded())
+            return "~\(d) day\(d == 1 ? "" : "s") left"
+        }
+        let hrs = max(1, Int((days * 24).rounded()))
+        return "~\(hrs)h left"
     }
 
     // MARK: today stats
