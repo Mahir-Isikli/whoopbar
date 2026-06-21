@@ -567,41 +567,36 @@ struct PopoverView: View {
                 .buttonStyle(.plain)
                 .help("A newer WhoopBar is available — brew upgrade --cask whoopbar, or click to view")
             }
-            if LoginItem.available {
-                // Drive off the live SMAppService state, not a stale @State mirror: the popover
-                // hierarchy is reused between opens so onAppear won't re-sync, and the user can
-                // also flip this from System Settings. Toggling the live value avoids the
-                // "next press does the opposite" bug.
-                Button {
-                    LoginItem.set(!LoginItem.enabled)
-                    launchAtLogin = LoginItem.enabled   // nudge a redraw + keep the mirror honest
-                } label: {
-                    Image(systemName: LoginItem.enabled ? "bolt.circle.fill" : "bolt.circle")
-                        .font(.system(size: 12, weight: .medium))
-                }
-                .buttonStyle(.plain)
-                .foregroundStyle(LoginItem.enabled ? Metric.recovery.tint : Color.secondary)
-                .help("Start WhoopBar at login")
-            }
-            // Always-available way back into the Connect flow: re-check or update your WHOOP
-            // credentials (or disconnect) long after the first-run onboarding is gone.
-            Button { openConnect() } label: {
-                Image(systemName: "key.fill").font(.system(size: 12, weight: .medium))
-            }
-            .buttonStyle(.plain)
-            .foregroundStyle(auth.isConnected ? Metric.recovery.tint : Color.secondary)
-            .help(auth.isConnected ? "Whoop connected — re-check your keys or disconnect"
-                                   : "Connect Whoop for Recovery, Sleep, Strain & HRV")
-            Button { store.refresh() } label: {
-                Image(systemName: "arrow.clockwise")
-                    .font(.system(size: 12, weight: .medium))
-                    .rotationEffect(.degrees(store.loading ? 360 : 0))
-                    .animation(store.loading ? .linear(duration: 1).repeatForever(autoreverses: false) : .default, value: store.loading)
-            }.buttonStyle(.plain).foregroundStyle(.secondary)
-            Button { NSApplication.shared.terminate(nil) } label: {
-                Image(systemName: "power").font(.system(size: 12, weight: .medium))
-            }.buttonStyle(.plain).foregroundStyle(.secondary)
+            settingsMenu
         }
+    }
+
+    /// Every action spelled out in words instead of a row of guess-the-icon buttons. One gear keeps
+    /// the footer a single tidy row — writing all four labels inline would overflow it and, worse,
+    /// resize the window. Click to reveal: start at login (with a checkmark), refresh, connection, quit.
+    private var settingsMenu: some View {
+        Menu {
+            if LoginItem.available {
+                Toggle(isOn: Binding(get: { LoginItem.enabled },
+                                     set: { LoginItem.set($0); launchAtLogin = LoginItem.enabled })) {
+                    Text("Start WhoopBar at login")
+                }
+            }
+            Button { store.refresh() } label: { Label("Refresh data now", systemImage: "arrow.clockwise") }
+                .disabled(store.loading)
+            Button { openConnect() } label: {
+                Label(auth.isConnected ? "Re-check Whoop connection…" : "Connect Whoop…", systemImage: "key")
+            }
+            Divider()
+            Button { NSApplication.shared.terminate(nil) } label: { Label("Quit WhoopBar", systemImage: "power") }
+        } label: {
+            Image(systemName: "gearshape").font(.system(size: 13, weight: .medium))
+        }
+        .menuStyle(.borderlessButton)
+        .menuIndicator(.hidden)
+        .fixedSize()
+        .foregroundStyle(.secondary)
+        .help("Start at login, refresh, Whoop connection, quit")
     }
 
     private var updatedText: String {
