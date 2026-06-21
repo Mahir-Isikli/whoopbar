@@ -151,6 +151,7 @@ struct PopoverView: View {
             metricPills
             Text(explainerText)
                 .font(.system(size: 11)).foregroundStyle(.secondary)
+                .lineLimit(1)                           // one line always: keeps the window height fixed
                 .frame(maxWidth: .infinity, alignment: .leading)
             Group {
                 if metric == .heartRate {
@@ -181,8 +182,8 @@ struct PopoverView: View {
     private var explainerText: String {
         guard metric == .heartRate else { return metric.explainer }
         return range == 1
-            ? "Today's heart rate · logged live on this Mac while connected"
-            : "Your heart rate each day · low to high, with the average line · logged on this Mac"
+            ? "Today's live heart rate · logged on this Mac"
+            : "Your heart rate each day · low, average and high"
     }
 
     // MARK: onboarding (first launch)
