@@ -9,6 +9,7 @@ struct FluidTabBar<T: Hashable>: View {
     let label: (T) -> String
     let accent: (T) -> Color
     var showTrack: Bool = true
+    var hPad: CGFloat = 10
     let pal: Pal
 
     @Environment(\.colorScheme) private var scheme
@@ -26,7 +27,7 @@ struct FluidTabBar<T: Hashable>: View {
                 Text(label(item))
                     .font(.system(size: 12, weight: isSel ? .semibold : .medium))
                     .foregroundStyle(isSel ? accent(item) : Color.secondary)
-                    .padding(.horizontal, 10).padding(.vertical, 6)
+                    .padding(.horizontal, hPad).padding(.vertical, 6)
                     .background {
                         ZStack {
                             if isSel {

@@ -9,9 +9,9 @@
     <key>CFBundleIdentifier</key>
     <string>com.mahir.whoopbar</string>
     <key>CFBundleVersion</key>
-    <string>9</string>
+    <string>10</string>
     <key>CFBundleShortVersionString</key>
-    <string>1.0</string>
+    <string>1.1</string>
     <key>CFBundleExecutable</key>
     <string>WhoopBar</string>
     <key>CFBundlePackageType</key>

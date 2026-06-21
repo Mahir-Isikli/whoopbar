@@ -9,6 +9,16 @@ struct HRPoint: Identifiable {
     var id: TimeInterval { date.timeIntervalSince1970 }
 }
 
+/// One calendar day of locally-logged heart rate: the day's low, average and high bpm.
+/// This is the longer-range record the WHOOP cloud API never exposes — we own every sample.
+struct HRDayStat: Identifiable {
+    let day: Date
+    let lo: Double
+    let avg: Double
+    let hi: Double
+    var id: TimeInterval { day.timeIntervalSince1970 }
+}
+
 /// Local SQLite store at ~/Library/Application Support/WhoopBar/whoop-local.db.
 /// Two tables:
 ///   hr_samples(ts, bpm)  — live BLE heart rate, ~1 Hz (ts = unix seconds, so dedupes per second).
@@ -86,6 +96,37 @@ final class LocalDB {
                 while sqlite3_step(st) == SQLITE_ROW {
                     out.append(HRPoint(date: Date(timeIntervalSince1970: TimeInterval(sqlite3_column_int64(st, 0))),
                                        bpm: Double(sqlite3_column_int(st, 1))))
+                }
+            }
+            sqlite3_finalize(st)
+        }
+        return out
+    }
+
+    /// Per-calendar-day HR stats (local time) on or after `since`, oldest first.
+    /// SQLite aggregates the raw 1 Hz samples into one (low, avg, high) row per local day —
+    /// cheap even with months of data, and the basis for the 7/30/90-day heart-rate view.
+    func hrDailyStats(since: Date) -> [HRDayStat] {
+        var out: [HRDayStat] = []
+        let fmt = DateFormatter()
+        fmt.dateFormat = "yyyy-MM-dd"
+        fmt.calendar = Calendar(identifier: .gregorian)
+        fmt.timeZone = TimeZone.current               // group keys come back as local dates
+        q.sync {
+            var st: OpaquePointer?
+            // bpm>0 drops the spurious zeros the strap emits when it briefly loses skin contact,
+            // so a day's low reflects a real resting reading rather than a dropout artifact.
+            let sql = "SELECT date(ts,'unixepoch','localtime') AS d, MIN(bpm), AVG(bpm), MAX(bpm) " +
+                      "FROM hr_samples WHERE ts>=? AND bpm>0 GROUP BY d ORDER BY d"
+            if sqlite3_prepare_v2(self.db, sql, -1, &st, nil) == SQLITE_OK {
+                sqlite3_bind_int64(st, 1, sqlite3_int64(Int(since.timeIntervalSince1970)))
+                while sqlite3_step(st) == SQLITE_ROW {
+                    guard let cstr = sqlite3_column_text(st, 0),
+                          let day = fmt.date(from: String(cString: cstr)) else { continue }
+                    out.append(HRDayStat(day: day,
+                                         lo: Double(sqlite3_column_int(st, 1)),
+                                         avg: sqlite3_column_double(st, 2),
+                                         hi: Double(sqlite3_column_int(st, 3))))
                 }
             }
             sqlite3_finalize(st)

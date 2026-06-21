@@ -25,6 +25,7 @@ private struct History: Codable { let generated_at: String?; let days: [DayPoint
 final class WhoopStore: ObservableObject {
     @Published var days: [DayPoint] = []
     @Published var todayHR: [HRPoint] = []
+    @Published var hrDaily: [HRDayStat] = []
     @Published var lastUpdated: Date?
     @Published var loading = false
     @Published var errorText: String?
@@ -36,6 +37,7 @@ final class WhoopStore: ObservableObject {
         loadCache()
         refresh()
         loadTodayHR()
+        loadHRDaily()
         timer = Timer.scheduledTimer(withTimeInterval: 600, repeats: true) { [weak self] _ in self?.refresh() }
         // Keep the day-view HR series fresh while the popover is open.
         hrTimer = Timer.scheduledTimer(withTimeInterval: 10, repeats: true) { [weak self] _ in self?.loadTodayHR() }
@@ -51,6 +53,16 @@ final class WhoopStore: ObservableObject {
             let start = Calendar.current.startOfDay(for: Date())
             let pts = LocalDB.shared.hrSamples(since: start)
             DispatchQueue.main.async { self.todayHR = pts }
+        }
+    }
+
+    /// Load the daily HR aggregate (low/avg/high per day) for the full 90-day retention window.
+    /// The popover filters this down to the selected 7/30/90-day range when drawing the chart.
+    func loadHRDaily() {
+        DispatchQueue.global(qos: .utility).async {
+            let since = Calendar.current.date(byAdding: .day, value: -90, to: Date()) ?? .distantPast
+            let pts = LocalDB.shared.hrDailyStats(since: since)
+            DispatchQueue.main.async { self.hrDaily = pts }
         }
     }
 

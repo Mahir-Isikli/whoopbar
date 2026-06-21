@@ -8,11 +8,16 @@ enum Metric: String, CaseIterable, Identifiable {
     case strain = "Strain"
     case sleep = "Sleep"
     case rhr = "RHR"
+    case heartRate = "HR"          // our own, locally-logged heart rate — split from the cloud metrics
     var id: String { rawValue }
+
+    /// The metrics WHOOP's cloud publishes once a day. `heartRate` is deliberately not here:
+    /// it comes from the live BLE log on this Mac, so it's shown separately and at finer granularity.
+    static var cloudCases: [Metric] { [.recovery, .hrv, .strain, .sleep, .rhr] }
 
     var unit: String {
         switch self { case .recovery: return "%"; case .hrv: return "ms"; case .strain: return ""
-        case .sleep: return "h"; case .rhr: return "bpm" }
+        case .sleep: return "h"; case .rhr: return "bpm"; case .heartRate: return "bpm" }
     }
     /// Plain-language explainer shown under the picker.
     var explainer: String {
@@ -22,6 +27,7 @@ enum Metric: String, CaseIterable, Identifiable {
         case .strain:   return "Cardiovascular load · 0–21 scale"
         case .sleep:    return "Time asleep · hours"
         case .rhr:      return "Resting heart rate · bpm, lower is better"
+        case .heartRate: return "Your heart rate · logged live on this Mac"
         }
     }
     func value(_ d: DayPoint) -> Double? {
@@ -31,6 +37,7 @@ enum Metric: String, CaseIterable, Identifiable {
         case .strain: return d.strain
         case .sleep: return d.sleep_hours
         case .rhr: return d.rhr
+        case .heartRate: return nil          // sourced from local SQLite, not the daily cloud series
         }
     }
     func format(_ v: Double) -> String {
@@ -40,6 +47,7 @@ enum Metric: String, CaseIterable, Identifiable {
         case .strain:   return String(format: "%.1f", v)
         case .sleep:    return String(format: "%.1f", v) + "h"
         case .rhr:      return "\(Int(v.rounded())) bpm"
+        case .heartRate: return "\(Int(v.rounded())) bpm"
         }
     }
     var tint: Color {
@@ -49,6 +57,7 @@ enum Metric: String, CaseIterable, Identifiable {
         case .strain:   return Color(red: 0.36, green: 0.50, blue: 0.96)
         case .sleep:    return Color(red: 0.55, green: 0.48, blue: 0.95)
         case .rhr:      return Color(red: 0.96, green: 0.46, blue: 0.43)
+        case .heartRate: return Color(red: 0.96, green: 0.36, blue: 0.42)
         }
     }
     /// A fixed, sensible y-range per metric so the axis means something.
@@ -58,7 +67,7 @@ enum Metric: String, CaseIterable, Identifiable {
         case .strain:   return 0...21
         case .sleep:    return 0...max(8, (values.max() ?? 8).rounded(.up))
         case .hrv:      return 0...max(60, ((values.max() ?? 60) * 1.15).rounded(.up))
-        case .rhr:
+        case .rhr, .heartRate:
             let lo = max(30, (values.min() ?? 50) - 5).rounded(.down)
             let hi = ((values.max() ?? 70) + 5).rounded(.up)
             return lo...hi
@@ -140,22 +149,40 @@ struct PopoverView: View {
             header
             statRow
             metricPills
-                .disabled(range == 1)
-                .opacity(range == 1 ? 0.3 : 1)          // metrics aren't intraday; dim in Day view
-            Text(range == 1 ? "Today's heart rate · logged live on this Mac while connected"
-                             : metric.explainer)
+            Text(explainerText)
                 .font(.system(size: 11)).foregroundStyle(.secondary)
                 .frame(maxWidth: .infinity, alignment: .leading)
             Group {
-                if range == 1 { dayChart } else { trendChart }
+                if metric == .heartRate {
+                    if range == 1 { dayChart } else { hrTrendChart }   // our HR: intraday or daily band
+                } else {
+                    trendChart                                         // cloud metric: daily trend
+                }
             }
             .transaction { $0.animation = nil }         // swap instantly; never animate a relayout here
             rangePills
             footer
         }
         .padding(18)
-        .onChange(of: range) { _, newValue in hover = nil; if newValue == 1 { store.loadTodayHR() } }
-        .onChange(of: metric) { _, _ in hover = nil }
+        // Day is heart-rate-only (the cloud metrics aren't intraday), so picking Day implies HR and
+        // picking a cloud metric while on Day bumps to a multi-day range. Every shown combo stays valid.
+        .onChange(of: range) { _, newValue in
+            hover = nil
+            if newValue == 1 { metric = .heartRate; store.loadTodayHR() } else { store.loadHRDaily() }
+        }
+        .onChange(of: metric) { _, newValue in
+            hover = nil
+            if newValue != .heartRate && range == 1 { range = 30 }
+            if newValue == .heartRate && range > 1 { store.loadHRDaily() }
+        }
+    }
+
+    /// Caption under the picker — heart rate gets its own wording at each granularity.
+    private var explainerText: String {
+        guard metric == .heartRate else { return metric.explainer }
+        return range == 1
+            ? "Today's heart rate · logged live on this Mac while connected"
+            : "Your heart rate each day · low to high, with the average line · logged on this Mac"
     }
 
     // MARK: onboarding (first launch)
@@ -168,6 +195,7 @@ struct PopoverView: View {
             Text("WhoopBar").font(.system(size: 20, weight: .semibold, design: .rounded))
             Text("Your live heart rate, right in the menu bar.\nEverything stays on this Mac.")
                 .font(.system(size: 12)).foregroundStyle(.secondary).multilineTextAlignment(.center)
+            broadcastNote
             Toggle("Start automatically at login", isOn: $launchAtLogin)
                 .toggleStyle(.switch).font(.system(size: 12)).tint(Metric.recovery.tint)
                 .padding(.horizontal, 8).fixedSize()
@@ -192,6 +220,23 @@ struct PopoverView: View {
         .padding(24)
         .frame(width: 380)
         .onAppear { launchAtLogin = true }   // default the choice to on
+    }
+
+    /// The one thing WhoopBar can't do for the user: the strap only advertises standard BLE
+    /// heart rate once "Broadcast Heart Rate" is on in the WHOOP app. Call it out up front.
+    private var broadcastNote: some View {
+        HStack(alignment: .top, spacing: 9) {
+            Image(systemName: "antenna.radiowaves.left.and.right")
+                .font(.system(size: 13)).foregroundStyle(hrTint).padding(.top, 1)
+            Text("First, open the WHOOP app and turn on **Broadcast Heart Rate** — that's what lets your strap share live BPM over Bluetooth.")
+                .font(.system(size: 11)).foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(11)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(pal.card)
+        .clipShape(RoundedRectangle(cornerRadius: 12))
+        .overlay(RoundedRectangle(cornerRadius: 12).stroke(pal.hairline, lineWidth: 1))
     }
 
     // MARK: header
@@ -261,9 +306,16 @@ struct PopoverView: View {
 
     // MARK: metric selector
 
+    // Heart rate (our own, high-granularity log) sits on its own, split off from the daily cloud
+    // metrics by a hairline — both share the same selection, so only the active pill lights up.
     private var metricPills: some View {
-        FluidTabBar(items: Metric.allCases, selection: $metric,
-                    label: { $0.rawValue }, accent: { $0.tint }, pal: pal)
+        HStack(spacing: 6) {
+            FluidTabBar(items: [Metric.heartRate], selection: $metric,
+                        label: { $0.rawValue }, accent: { $0.tint }, hPad: 8, pal: pal)
+            Rectangle().fill(pal.hairline).frame(width: 1, height: 16)
+            FluidTabBar(items: Metric.cloudCases, selection: $metric,
+                        label: { $0.rawValue }, accent: { $0.tint }, hPad: 8, pal: pal)
+        }
     }
 
     // MARK: charts
@@ -287,7 +339,7 @@ struct PopoverView: View {
     private var dayChart: some View {
         Group {
             if dayHRSeries.isEmpty {
-                placeholder("No heart rate logged yet today.\nWear the strap near your Mac and it fills in live.")
+                placeholder("No heart rate yet today.\nTurn on Broadcast Heart Rate in the WHOOP app, then wear the strap near your Mac.")
             } else {
                 let vals = dayHRSeries.map(\.bpm)
                 let lo = max(40, (vals.min() ?? 50) - 5).rounded(.down)
@@ -323,6 +375,60 @@ struct PopoverView: View {
                     }
                 }
                 .chartOverlay { proxy in scrubber(proxy, points: dayHRSeries.map { ($0.date, $0.bpm) }) }
+                .frame(height: 150)
+            }
+        }
+    }
+
+    /// Daily HR aggregate within the selected range (7/30/90), from the local SQLite log.
+    private var hrSeries: [HRDayStat] {
+        let cutoff = Calendar.current.date(byAdding: .day, value: -range, to: Date()) ?? .distantPast
+        return store.hrDaily.filter { $0.day >= cutoff }
+    }
+
+    /// Heart rate over 7/30/90 days: a low→high band per day with the daily average as the line.
+    /// This is the part the WHOOP cloud never gives you — we kept every sample, so we can show it.
+    private var hrTrendChart: some View {
+        Group {
+            if hrSeries.isEmpty {
+                placeholder("No heart-rate history yet.\nTurn on Broadcast Heart Rate in the WHOOP app — it builds up here over time.")
+            } else {
+                let lo = max(35, (hrSeries.map(\.lo).min() ?? 45) - 5).rounded(.down)
+                let hi = ((hrSeries.map(\.hi).max() ?? 150) + 8).rounded(.up)
+                Chart {
+                    ForEach(hrSeries) { s in
+                        AreaMark(x: .value("Date", s.day),
+                                 yStart: .value("low", s.lo), yEnd: .value("high", s.hi))
+                            .interpolationMethod(.monotone)
+                            .foregroundStyle(.linearGradient(colors: [hrTint.opacity(0.28), hrTint.opacity(0.06)],
+                                                              startPoint: .top, endPoint: .bottom))
+                        LineMark(x: .value("Date", s.day), y: .value("avg", s.avg))
+                            .interpolationMethod(.monotone)
+                            .foregroundStyle(hrTint)
+                            .lineStyle(StrokeStyle(lineWidth: 2.0, lineCap: .round, lineJoin: .round))
+                    }
+                    hoverMarks(tint: hrTint) { h in
+                        let stat = hrSeries.first { Calendar.current.isDate($0.day, inSameDayAs: h.date) }
+                        let date = h.date.formatted(.dateTime.month(.abbreviated).day())
+                        hoverCard(value: "\(Int(h.value.rounded())) avg",
+                                  sub: stat.map { "\(Int($0.lo))–\(Int($0.hi)) bpm · \(date)" } ?? date,
+                                  tint: hrTint)
+                    }
+                }
+                .chartYScale(domain: lo...hi)
+                .chartYAxis {
+                    AxisMarks(position: .leading, values: .automatic(desiredCount: 4)) {
+                        AxisGridLine().foregroundStyle(pal.grid)
+                        AxisValueLabel().font(.system(size: 9)).foregroundStyle(.secondary)
+                    }
+                }
+                .chartXAxis {
+                    AxisMarks(values: .automatic(desiredCount: 4)) {
+                        AxisValueLabel(format: .dateTime.month(.abbreviated).day())
+                            .font(.system(size: 9)).foregroundStyle(.secondary)
+                    }
+                }
+                .chartOverlay { proxy in scrubber(proxy, points: hrSeries.map { ($0.day, $0.avg) }) }
                 .frame(height: 150)
             }
         }
@@ -476,6 +582,15 @@ struct PopoverView: View {
                 .foregroundStyle(LoginItem.enabled ? Metric.recovery.tint : Color.secondary)
                 .help("Start WhoopBar at login")
             }
+            // Always-available way back into the Connect flow: re-check or update your WHOOP
+            // credentials (or disconnect) long after the first-run onboarding is gone.
+            Button { openConnect() } label: {
+                Image(systemName: "key.fill").font(.system(size: 12, weight: .medium))
+            }
+            .buttonStyle(.plain)
+            .foregroundStyle(auth.isConnected ? Metric.recovery.tint : Color.secondary)
+            .help(auth.isConnected ? "Whoop connected — re-check your keys or disconnect"
+                                   : "Connect Whoop for Recovery, Sleep, Strain & HRV")
             Button { store.refresh() } label: {
                 Image(systemName: "arrow.clockwise")
                     .font(.system(size: 12, weight: .medium))

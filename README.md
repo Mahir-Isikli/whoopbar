@@ -6,11 +6,14 @@ Live WHOOP heart rate in your Mac menu bar, plus a local history you own.
 
 - Shows your **live heart rate** in the menu bar, read over Bluetooth straight from the strap (read-only, does not disturb your phone).
 - Click it for a clean popover: today's recovery / sleep / strain, a **Day view** of today's intraday heart rate, and 7/30/90-day trends. Hover any chart to read the exact value.
+- Your **heart rate is its own view**, split off from the WHOOP cloud metrics: pick HR and you get today's live trace, or a 7/30/90-day band of each day's low–high with the average line. That long-range heart-rate history is something the WHOOP API never gives back.
 - Logs every heart-rate sample to a **local SQLite** database, so you keep an intraday record the WHOOP API never exposes.
+
+> **One-time setup in the WHOOP app:** turn on **Broadcast Heart Rate** so the strap advertises its live BPM over Bluetooth. Without it, the strap stays private to your phone and the menu bar shows "–". WhoopBar walks you through this on first launch.
 
 ## Setup
 
-Needs a Mac (macOS 14+) with Bluetooth and a WHOOP strap worn nearby.
+Needs a Mac (macOS 14+) with Bluetooth and a WHOOP strap worn nearby, with **Broadcast Heart Rate** turned on in the WHOOP app (that's what makes the strap share its BPM over Bluetooth).
 
 WhoopBar is free and open source but **not notarized** (that needs a paid $99/yr Apple account), so macOS adds one small first-launch step. Easiest first:
 

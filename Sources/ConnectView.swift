@@ -10,6 +10,7 @@ struct ConnectView: View {
     @State private var clientId = ""
     @State private var clientSecret = ""
     @State private var copiedText: String?
+    @State private var prefilled = false
 
     private var pal: Pal { Pal(scheme: scheme) }
     private let createAppURL = "https://developer-dashboard.whoop.com/apps/create"
@@ -26,6 +27,8 @@ struct ConnectView: View {
                     Text("Recovery, Sleep, Strain & HRV — kept on this Mac.")
                         .font(.system(size: 11)).foregroundStyle(.secondary)
                 }
+
+                if auth.isConnected { connectedBanner }
 
                 step(1, "Create your Whoop app") {
                     Button { NSWorkspace.shared.open(URL(string: createAppURL)!) } label: {
@@ -60,11 +63,40 @@ struct ConnectView: View {
             .padding(20)
         }
         .frame(width: 380)
-        .onChange(of: auth.status) { _, s in if s == .connected { onClose() } }
+        // Reopened from the footer key, the saved keys are prefilled so you can verify or edit them.
+        .onAppear {
+            guard !prefilled else { return }
+            prefilled = true
+            if clientId.isEmpty { clientId = Secrets.get("clientId") ?? "" }
+            if clientSecret.isEmpty { clientSecret = Secrets.get("clientSecret") ?? "" }
+        }
+        // Close only on a fresh transition into connected — not when reopened while already connected.
+        .onChange(of: auth.status) { old, s in if s == .connected && old != .connected { onClose() } }
+    }
+
+    /// Shown when WhoopBar already holds working credentials: confirms the link and offers a way out.
+    private var connectedBanner: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "checkmark.seal.fill").foregroundStyle(Metric.recovery.tint)
+            Text("Connected to Whoop").font(.system(size: 12, weight: .medium))
+            Spacer()
+            Button("Disconnect") { auth.disconnect() }
+                .font(.system(size: 11)).buttonStyle(.bordered).controlSize(.small)
+        }
+        .padding(.horizontal, 12).padding(.vertical, 9)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(pal.card)
+        .clipShape(RoundedRectangle(cornerRadius: 12))
+        .overlay(RoundedRectangle(cornerRadius: 12).stroke(pal.hairline, lineWidth: 1))
     }
 
     private var connectLabel: String {
-        switch auth.status { case .connecting: return "Waiting for login…"; case .syncing: return "Fetching…"; default: return "Connect" }
+        switch auth.status {
+        case .connecting: return "Waiting for login…"
+        case .syncing: return "Fetching…"
+        case .connected: return "Reconnect"
+        default: return "Connect"
+        }
     }
 
     @ViewBuilder private var status: some View {
