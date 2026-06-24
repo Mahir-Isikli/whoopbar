@@ -15,6 +15,8 @@ Live WHOOP heart rate in your Mac menu bar, plus a local history you own.
 
 Needs a Mac (macOS 14+) with Bluetooth and a WHOOP strap worn nearby, with **Broadcast Heart Rate** turned on in the WHOOP app (that's what makes the strap share its BPM over Bluetooth).
 
+> **Wear the strap and turn on Heart Rate Broadcast.** WhoopBar reads heart rate over Bluetooth, but a WHOOP strap doesn't broadcast by default — it only transmits while worn and with broadcast enabled. On your phone, open the **WHOOP app → enable Heart Rate Broadcast** (the Bluetooth-broadcast toggle meant for gym equipment and third-party apps). That's the step that makes the strap show up over Bluetooth; without it WhoopBar has nothing to connect to. Broadcast streams to one device at a time, so free it from any gym equipment or other app first.
+
 WhoopBar is free and open source but **not notarized** (that needs a paid $99/yr Apple account), so macOS adds one small first-launch step. Easiest first:
 
 ### Option A — Homebrew (cleanest, opens with no warning)
