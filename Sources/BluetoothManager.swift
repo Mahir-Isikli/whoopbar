@@ -9,11 +9,24 @@ import CoreBluetooth
 final class BluetoothManager: NSObject, ObservableObject, CBCentralManagerDelegate, CBPeripheralDelegate {
     @Published var heartRate: Int?
     @Published var batteryLevel: Int?
+    /// Estimated days of charge left, inferred from the strap's observed discharge rate.
+    /// `nil` until there's enough discharge history (see `BatteryEstimator`).
+    @Published var batteryDaysLeft: Double?
     @Published var connected = false
     @Published var state: Status = .unknown
     @Published var deviceName = "WHOOP"
 
     enum Status { case unknown, off, searching, connecting, connected }
+
+    /// The strap battery is treated as "low" once it drops below this percentage.
+    static let lowBatteryThreshold = 30
+    /// True only when we have a reading and it's below the low threshold — drives the
+    /// menu-bar + popover low-battery alert. Unknown battery is never "low".
+    var batteryLow: Bool { (batteryLevel ?? 100) < Self.lowBatteryThreshold }
+
+    // Only persist a battery reading when the level actually changes, so each stored row is a
+    // real transition the discharge-rate estimate can measure between.
+    private var lastBatterySampled: Int?
 
     private var central: CBCentralManager!
     private var strap: CBPeripheral?
@@ -190,8 +203,23 @@ final class BluetoothManager: NSObject, ObservableObject, CBCentralManagerDelega
                 LocalDB.shared.insertHR(hr)   // log to local SQLite (intraday HR history)
             }
         } else if ch.uuid == battChar, let b = data.first {
-            batteryLevel = Int(b)
-            DLog.write("battery = \(b)%")
+            let level = Int(b)
+            batteryLevel = level
+            DLog.write("battery = \(level)%")
+            if level != lastBatterySampled {
+                lastBatterySampled = level
+                LocalDB.shared.insertBattery(level)   // log only on change → clean discharge series
+            }
+            refreshBatteryEstimate()
+        }
+    }
+
+    /// Recompute "days of charge left" from the recent battery history, off the main thread.
+    private func refreshBatteryEstimate() {
+        DispatchQueue.global(qos: .utility).async {
+            let since = Calendar.current.date(byAdding: .day, value: -7, to: Date()) ?? .distantPast
+            let est = BatteryEstimator.daysRemaining(samples: LocalDB.shared.batterySamples(since: since))
+            DispatchQueue.main.async { self.batteryDaysLeft = est }
         }
     }
 
